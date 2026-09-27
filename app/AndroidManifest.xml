@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.qqliveclean"
+    android:versionCode="15"
+    android:versionName="0.3.12">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <queries>
+        <package android:name="com.tencent.qqlive" />
+        <package android:name="com.youku.phone" />
+        <package android:name="com.qiyi.video" />
+    </queries>
+    <application
+        android:name=".App"
+        android:label="视频精简"
+        android:description="@string/description"
+        android:icon="@drawable/ic_launcher"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="false">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <provider
+            android:name="io.github.libxposed.service.XposedProvider"
+            android:authorities="io.github.qqliveclean.XposedService"
+            android:exported="true" />
+        <!-- Settings channel: the hooked process reads the whitelisted keys from here.
+             Deliberately not LSPosed's RemotePreferences, whose settings-side binder is
+             never delivered on this device (see ConfigProvider docs). -->
+        <provider
+            android:name=".ConfigProvider"
+            android:authorities="io.github.qqliveclean.config"
+            android:grantUriPermissions="true"
+            android:exported="true" />
+        <receiver android:name=".ReportReceiver" android:exported="true" />
+    </application>
+</manifest>
