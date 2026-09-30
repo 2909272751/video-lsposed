@@ -293,35 +293,76 @@ final class AdRules {
     }
 
     /**
-     * One switch for every feed-family ad cell. {@code ona.ad.universal.g.m(AdFeedInfo)} returns
-     * true for "deprecated feed style", after which the shared dispatcher returns null, so no ad
-     * cell is produced for 信息流 / 焦点图 / 卡片 / 底栏 alike. Obfuscated class name, so a rename
-     * logs a miss and the other rules keep working.
+     * One switch for every feed-family ad cell.
+     *
+     * <p>The app has several sibling gates, all with the SAME shape - a private
+     * {@code boolean(com.tencent.qqlive.protocol.pb.AdFeedInfo)} whose true branch means "drop this
+     * ad feed", so no ad cell is produced. Only one of them was hooked before, which is why ads in
+     * the player page's below-episode feed survived while the home feed was clean. Read from the
+     * shipped 9.04.51 dex, not guessed:
+     *
+     * <pre>
+     *   com.tencent.qqlive.ona.ad.universal.g   ?(AdFeedInfo)Z   home feed (already hooked)
+     *   com.tencent.qqlive.ona.ad.b            y(AdFeedInfo)Z
+     *   com.tencent.qqlive.ona.ad.feed.a       v(AdFeedInfo)Z
+     * </pre>
+     *
+     * <p>{@code ad.feed.a} is the one the player page needs: it also takes
+     * {@code (BaseCellVM, AdFeedInfo)} and {@code (BaseCellVM, AdFeedInfo, BaseSectionController)},
+     * i.e. it is the cell view-model layer where the card is actually built.
+     *
+     * <p>Obfuscated names, so a rename logs a miss and the other gates keep working.
      */
     static void installFeedAdCell(MainHook module, ClassLoader loader) {
         final String rule = "feed_ad_cell";
+        // Each entry is a class holding one gate. The method name is shape-matched, so a rebuild
+        // that renames the method is still caught as long as the class and the parameter survive.
+        String[] classes = {
+            "com.tencent.qqlive.ona.ad.universal.g",
+            "com.tencent.qqlive.ona.ad.b",
+            "com.tencent.qqlive.ona.ad.feed.a",
+        };
+        String[] names = {"m", "b", "j", "k", "y", "v"};
+        Class<?> adFeedInfo;
         try {
-            Class<?> dispatcher = R.load(loader, "com.tencent.qqlive.ona.ad.universal.g");
-            // 9.03.95 declares m(AdFeedInfo)Z; 9.04.55 exposes b/j/k(AdFeedInfo)Z and l()Z
-        // (named by the install table's miss line). Old name first, then the new ones;
-        // an ambiguous match is still reported as a miss by findByShape.
-        Method reject = R.findByShape(dispatcher, new String[]{"m", "b", "j", "k"}, boolean.class,
-                (Class<?>) null);
-            if (reject == null) {
-                H.miss(rule, "ona.ad.universal.g.m(?)Z not found; boolean(): "
-                        + R.describeShapes(dispatcher, boolean.class));
-                return;
-            }
-            module.hook(reject).setId("qqlive_feed_ad_cell").intercept(new XposedInterface.Hooker() {
-                @Override public Object intercept(XposedInterface.Chain chain) {
-                    H.hit(rule, "ad feed rejected -> no ad cell (feed/focus/card/bottom)", FEED_HIT);
-                    return Boolean.TRUE;
-                }
-            });
-            H.hooked(rule, "ona.ad.universal.g.m(AdFeedInfo)Z -> true");
+            adFeedInfo = R.load(loader, "com.tencent.qqlive.protocol.pb.AdFeedInfo");
         } catch (Throwable error) {
-            H.miss(rule, "install failed: " + H.describe(error));
+            H.miss(rule, "AdFeedInfo not loadable: " + H.describe(error));
+            return;
         }
+        int hooked = 0;
+        StringBuilder namesOut = new StringBuilder();
+        for (String className : classes) {
+            try {
+                Class<?> dispatcher = R.load(loader, className);
+                Method reject = R.findByShape(dispatcher, names, boolean.class, adFeedInfo);
+                if (reject == null) {
+                    H.diag(rule + ": no boolean(AdFeedInfo) gate on " + className);
+                    continue;
+                }
+                module.hook(reject).setId("qqlive_feed_ad_cell_" + hooked)
+                        .intercept(new XposedInterface.Hooker() {
+                            @Override public Object intercept(XposedInterface.Chain chain) {
+                                H.hit(rule, "ad feed rejected -> no ad cell (feed/focus/card/bottom)",
+                                        FEED_HIT);
+                                return Boolean.TRUE;
+                            }
+                        });
+                if (hooked > 0) {
+                    namesOut.append(", ");
+                }
+                namesOut.append(reject.getName());
+                hooked++;
+            } catch (Throwable error) {
+                H.diag(rule + ": " + className + " skipped - " + H.describe(error));
+            }
+        }
+        if (hooked == 0) {
+            H.miss(rule, "no boolean(AdFeedInfo) gate found on any ad class");
+            return;
+        }
+        H.hooked(rule, hooked + " ad-feed gates -> true: " + namesOut
+                + " (home feed / feed / cell-VM surfaces)");
     }
 
 

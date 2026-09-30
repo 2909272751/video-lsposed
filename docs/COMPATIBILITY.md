@@ -256,6 +256,41 @@ Java 层无从挂钩。腾讯已验证的那类 Java 闸门在这里没有对应
 因此要拦它只能回到**数据层**：找到给这块 Compose 区域供数的广告数据入口。
 这与前贴不同——前贴在 `ad_request_gate` 上已经解决，本卡是尚未处理的独立项。
 
+### 播放页广告卡：已找到同构闸门（真机验证待设备恢复）
+
+沿「数据层」往下查，路径是通的，全部基于真机 dex 签名：
+
+1. 先排除两条错误假设：
+   - `com.tencent.qqlive.protocol.pb.AdCardPalette` 不是卡片数据源，它只服务
+     `AdFeedImageStyleInfo`（信息流图片文案调色板），字段全是 String。
+   - `com.tencent.qqlive.protocol.pb.DetailModuleType` 枚举只有 6 个常量
+     （`UNSPECIFIED` / `SKP_BASE_INFORMATION` / `SKP_INTRODUCTION` / `COMMENT_WRITE` /
+     `MULTI_TAB_EMBED_PANEL` / `MULTI_TAB_FLOAT_PANEL`），**没有广告类型**。
+     所以 1688 卡不是详情页模块，而是**下方推荐流里注入的广告单元**。
+2. APK 内未集成任何电商广告 SDK（无 alibaba / 1688 / tmall / kwad 包），
+   确认该广告由腾讯自家广告系统下发。
+3. 正解：全 App 存在**多个同构闸门**，签名完全一致——
+   `private boolean(com.tencent.qqlive.protocol.pb.AdFeedInfo)`，返回 true 即丢弃该广告流，
+   不生成任何广告单元：
+
+   | 类 | 方法 | 作用面 |
+   |---|---|---|
+   | `ona.ad.universal.g` | `b/j/k/m(AdFeedInfo)Z` | 首页信息流（此前**唯一**被钩的） |
+   | `ona.ad.b` | `y(AdFeedInfo)Z` | 通用广告流 |
+   | `ona.ad.feed.a` | `v(AdFeedInfo)Z` | **cell ViewModel 层，播放页广告卡的构建点** |
+
+   `ad.feed.a` 同时有 `(BaseCellVM, AdFeedInfo)` 与
+   `(BaseCellVM, AdFeedInfo, BaseSectionController)` 重载，正是渲染单元的 VM 层。
+
+`feed_ad_cell` 已从「只钩 1 个」扩展为「**3 个闸门全钩**」，
+安装日志确认：`3 ad-feed gates -> true: b, y, v`。
+
+> ⚠️ **验证未完成**：APK 已构建并安装成功，但随后测试设备断连（adb 无设备），
+> 重试 4 次均未恢复，**尚未确认播放页的 1688 卡是否真的消失**。
+> 按本模块的取证标准（横幅消失 **且** 闸门命中），
+> 在拿到设备截图 + `feed_ad_cell` 命中计数之前，这项**只能算「已实现待验证」**，
+> 不能计入成果。
+
 ### 同轮复核：腾讯前贴仍然有效
 
 同一轮重跑腾讯，**前贴确认无广告**：点第 01 话后视频直接起播，
