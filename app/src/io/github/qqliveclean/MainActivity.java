@@ -169,6 +169,8 @@ public final class MainActivity extends Activity {
         LinearLayout qiyiCard = card();
         toggle(qiyiCard, Config.IQIYI_BLOCK_SPLASH, "拦截开屏广告",
                 "阻止启动时的广告请求", true);
+        toggle(qiyiCard, Config.IQIYI_BLOCK_PLAYER_ADS, "拦截播放广告",
+                "去掉前贴/中插广告和播放器内的横幅、角标推广", true);
         body.addView(qiyiCard);
 
         section(body, "首页与个人中心");

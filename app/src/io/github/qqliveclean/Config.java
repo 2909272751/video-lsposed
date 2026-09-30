@@ -170,6 +170,7 @@ public final class Config {
 
     // ---- 爱奇艺 ----
     public static final String IQIYI_BLOCK_SPLASH = "iqiyi_block_splash";
+    public static final String IQIYI_BLOCK_PLAYER_ADS = "iqiyi_block_player_ads";
     public static final String IQIYI_HIDE_HOME_TOP_AD = "iqiyi_hide_home_top_ad";
     public static final String IQIYI_HIDE_MINE_BANNER = "iqiyi_hide_mine_banner";
     public static final String IQIYI_SHOW_FREE = "iqiyi_show_free";
@@ -192,7 +193,7 @@ public final class Config {
             SHOW_CHANNEL_MOVIE, SHOW_CHANNEL_VARIETY, REDUCE_PRELOAD,
             YOUKU_BLOCK_SPLASH, YOUKU_BLOCK_AD_SLOT, YOUKU_HIDE_MINE_PROMOS, YOUKU_BLOCK_PAUSE_AD, YOUKU_HIDE_BOTTOM_BAR,
             YOUKU_SHOW_SHORT_DRAMA, YOUKU_SHOW_VIP, YOUKU_SHOW_GOOD_MOVIES,
-            IQIYI_BLOCK_SPLASH, IQIYI_HIDE_HOME_TOP_AD, IQIYI_HIDE_MINE_BANNER,
+            IQIYI_BLOCK_SPLASH, IQIYI_BLOCK_PLAYER_ADS, IQIYI_HIDE_HOME_TOP_AD, IQIYI_HIDE_MINE_BANNER,
             IQIYI_SHOW_FREE, IQIYI_SHOW_PLUS, IQIYI_SHOW_MEMBER,
     };
 
@@ -209,6 +210,7 @@ public final class Config {
             case YOUKU_HIDE_MINE_PROMOS:
             case YOUKU_BLOCK_PAUSE_AD:
             case IQIYI_BLOCK_SPLASH:
+            case IQIYI_BLOCK_PLAYER_ADS:
             case IQIYI_HIDE_HOME_TOP_AD:
             case IQIYI_HIDE_MINE_BANNER:
             case BLOCK_PUSH_NOTIFY:
@@ -305,6 +307,7 @@ public final class Config {
         final boolean youkuShowVip;
         final boolean youkuShowGoodMovies;
         final boolean iqiyiBlockSplash;
+        final boolean iqiyiBlockPlayerAds;
         final boolean iqiyiHideHomeTopAd;
         final boolean iqiyiHideMineBanner;
         final boolean iqiyiShowFree;
@@ -318,7 +321,7 @@ public final class Config {
                  boolean youkuBlockSplash, boolean youkuBlockAdSlot, boolean youkuHideMinePromos,
                  boolean youkuBlockPauseAd, boolean youkuHideBottomBar,
                  boolean youkuShowShortDrama, boolean youkuShowVip, boolean youkuShowGoodMovies,
-                 boolean iqiyiBlockSplash, boolean iqiyiHideHomeTopAd, boolean iqiyiHideMineBanner,
+                 boolean iqiyiBlockSplash, boolean iqiyiBlockPlayerAds, boolean iqiyiHideHomeTopAd, boolean iqiyiHideMineBanner,
                  boolean iqiyiShowFree, boolean iqiyiShowPlus,
                  boolean iqiyiShowMember) {
             this.source = source;
@@ -342,6 +345,7 @@ public final class Config {
             this.youkuShowVip = youkuShowVip;
             this.youkuShowGoodMovies = youkuShowGoodMovies;
             this.iqiyiBlockSplash = iqiyiBlockSplash;
+            this.iqiyiBlockPlayerAds = iqiyiBlockPlayerAds;
             this.iqiyiHideHomeTopAd = iqiyiHideHomeTopAd;
             this.iqiyiHideMineBanner = iqiyiHideMineBanner;
             this.iqiyiShowFree = iqiyiShowFree;
@@ -596,6 +600,8 @@ public final class Config {
                 value(provider, null, YOUKU_SHOW_VIP),
                 value(provider, null, YOUKU_SHOW_GOOD_MOVIES),
                 value(provider, null, IQIYI_BLOCK_SPLASH),
+
+                value(provider, null, IQIYI_BLOCK_PLAYER_ADS),
                 value(provider, null, IQIYI_HIDE_HOME_TOP_AD),
                 value(provider, null, IQIYI_HIDE_MINE_BANNER),
                 value(provider, null, IQIYI_SHOW_FREE),
@@ -633,6 +639,8 @@ public final class Config {
                 value(null, remote, YOUKU_SHOW_VIP),
                 value(null, remote, YOUKU_SHOW_GOOD_MOVIES),
                 value(null, remote, IQIYI_BLOCK_SPLASH),
+
+                value(null, remote, IQIYI_BLOCK_PLAYER_ADS),
                 value(null, remote, IQIYI_HIDE_HOME_TOP_AD),
                 value(null, remote, IQIYI_HIDE_MINE_BANNER),
                 value(null, remote, IQIYI_SHOW_FREE),

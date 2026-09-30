@@ -168,12 +168,12 @@ public final class H {
      * way to tell "the new code ran and found nothing" from "the new build never loaded". That is
      * the exact ambiguity REPORT_SCHEMA exists to remove; this is it applied properly.
      */
-    static final int SCHEMA = 64;
+    static final int SCHEMA = 65;
 
     /** Records a rule that is armed and will take effect. */
     static synchronized void hooked(String rule, String detail) {
         results.put(rule, "matched");
-        reasons.remove(rule);
+        reasons.put(rule, detail == null ? "" : detail);
         installNotes.append(rule).append("=ok ");
         hooked++;
         log(Log.INFO, "rule=" + rule + " status=hooked" + (detail == null ? "" : " " + detail));
