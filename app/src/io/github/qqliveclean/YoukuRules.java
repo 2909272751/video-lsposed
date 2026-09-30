@@ -358,36 +358,62 @@ final class YoukuRules {
      * {@code AdRequestManager}, so this gate does not cover them.
      */
     /**
-     * A-2, second attempt, and the finding that should redirect the next one: the Youku pre-roll is
-     * not served by Youku's own code at all. Logcat during a live pre-roll shows the Kwai Union
-     * (快手联盟) SDK running inside the process - {@code com.kwad.sdk.o},
-     * {@code com.kwad.sdk.commercial.g.a} and the {@code ksad-sdk_core1} threads all appear.
-     * A third-party SDK is loaded into this process, so unlike Youku's own layer its classes do go
-     * through this ClassLoader and are hookable - the one remaining lead that is not native code.
+     * A-2: three attempts at the Youku pre-roll, all refuted. Kept as the record of what was ruled
+     * out, so the next attempt starts from the evidence rather than repeating the probing.
      *
-     * <p>Probed this round without success: {@code com.kwad.sdk.o} declares only zero-arg methods
-     * ({@code FG/FH/FI/FJ} boolean getters, {@code GE/GF}) and has no {@code init} anywhere in its
-     * hierarchy. {@code com.kwad.sdk.commercial.g.a.i(String,String)} is real - note that
-     * {@code getDeclaredMethods()} shows it while {@code getMethods()} does not, because the Kwai
-     * SDK keeps its entry points package-private, so a public-only lookup silently misses them -
-     * and it was hooked, but it never fires while a pre-roll plays. The
-     * "Long monitor contention ... at com.kwad.sdk.commercial.g.a.i(String,String)" line was a
-     * contended lock, not the ad request. The pre-roll stayed on screen with its countdown intact.
+     * <p>Attempt 1 - the app's own ad layer. {@code j.b1.w3.b.c.d.u(int)Z} does not exist in
+     * 11.2.13, {@code AdRequestManager} exposes only void methods, and rewriting the cached Orange
+     * configs {@code yk_adsdk_syscfg} ({@code *.enable}) and {@code one_ad_config}
+     * ({@code enable_youku_ssp}) to 0 left the ad on screen in both cases.
      *
-     * <p>Nothing is hooked here on purpose. The remaining unknown is the SDK's actual ad request
-     * entry point; leaving a proven-inert hook installed would only make {@code matched} misleading.
+     * <p>Attempt 2 - the Kwai Union (快手联盟) SDK. Logcat during a live pre-roll does show it
+     * running in-process ({@code com.kwad.sdk.o}, {@code com.kwad.sdk.commercial.g.a}, the
+     * {@code ksad-sdk_core1} threads), and unlike Youku's own layer a third-party SDK is loaded
+     * into this process, so its classes are hookable. Two anchors were hooked and both stayed at
+     * zero hits: {@code com.kwad.sdk.o} has no {@code init} in its whole hierarchy (only the
+     * zero-arg {@code FG/FH/FI/FJ} getters and {@code GE/GF}), and
+     * {@code com.kwad.sdk.commercial.g.a.i(String,String)} - real, but package-private, so only
+     * {@code getDeclaredMethods()} sees it - never fires during a pre-roll. The
+     * "Long monitor contention ... at ...i(String,String)" line is a contended lock, not the
+     * ad request.
+     *
+     * <p>Attempt 3 - the SDK's real public API, read from the shipped dex instead of guessed.
+     * {@code dexdump} on the Youku APK's classes9.dex shows the Kwai API is not obfuscated at all:
+     * {@code com.kwad.sdk.api.KsLoadManager.loadFullScreenVideoAd(KsScene, FullScreenVideoAdListener)}
+     * is exactly the fullscreen video slot, i.e. the pre-roll, alongside
+     * {@code loadInterstitialAd}, {@code loadSplashScreenAd}, {@code loadFeedAd},
+     * {@code loadBannerAd} and the rest. The interface declaration is abstract and libxposed
+     * refuses abstract methods, so the concrete {@code PUBLIC FINAL} definitions were hooked
+     * instead: {@code com.kwad.components.core.b} (the router) and, for the record, the other two
+     * are {@code com.kwad.sdk.api.b} and {@code com.kwad.components.ad.fullscreen.a}.
+     *
+     * <p>That gate armed cleanly and then <b>never fired either</b>, while the pre-roll played to
+     * completion with its countdown intact. So the pre-roll is not a Kwai fullscreen video request
+     * either: the Kwai SDK is present and active but is serving other slots, and the pre-roll
+     * comes from Youku's own ad system through some path this module has not yet located.
+     *
+     * <p>Nothing is hooked here. Leaving proven-inert hooks installed would only make
+     * {@code matched} look like success, which is exactly the misreading this table exists to
+     * prevent.
      */
     private static void reportKwadGateWithdrawn() {
-        H.skipped("youku_kwad_ad", "withdrawn on 11.2.13: the pre-roll is served by the Kwai Union"
-                + " SDK (com.kwad.sdk.*, ksad-sdk_core1 threads), which IS hookable and was probed -"
-                + " but com.kwad.sdk.o has no init in its hierarchy, and"
-                + " com.kwad.sdk.commercial.g.a.i(String,String) is armed yet never fires during a"
-                + " pre-roll; the real ad request entry point inside that SDK is still unknown");
-        H.skipped("youku_kwad_api", "diagnostic only: com.kwad.sdk.o = FG/FH/FI/FJ boolean getters"
-                + " + GE/GF, no init; com.kwad.sdk.commercial.g.a = void i(String,String),"
-                + " v(String,String), v(String,String,boolean), w(String,String), e(String,String),"
-                + " d(String,String), dA(String), register() - all package-private, so getMethods()"
-                + " cannot see them and only getDeclaredMethods() can");
+        H.skipped("youku_kwad_ad", "withdrawn on 11.2.13 after three refuted anchors. The Kwai Union"
+                + " SDK really does run in-process (com.kwad.sdk.*, ksad-sdk_core1 threads) and is"
+                + " hookable, but none of these fires during a pre-roll: com.kwad.sdk.o has no init"
+                + " in its hierarchy; com.kwad.sdk.commercial.g.a.i(String,String) is 0 hits; and"
+                + " com.kwad.components.core.b.loadFullScreenVideoAd(KsScene,"
+                + " FullScreenVideoAdListener) - the SDK's own unobfuscated fullscreen-video slot,"
+                + " read from classes9.dex - armed cleanly and also stayed at 0 hits while the ad"
+                + " played with its countdown intact. Conclusion: the pre-roll is NOT a Kwai"
+                + " fullscreen video request; Youku serves it from its own ad system.");
+        H.skipped("youku_kwad_api", "diagnostic only, from dexdump of the Youku APK:"
+                + " com.kwad.sdk.api.KsLoadManager declares loadFullScreenVideoAd / loadInterstitialAd"
+                + " / loadSplashScreenAd / loadRewardVideoAd / loadFeedAd / loadBannerAd / loadDrawAd"
+                + " / loadNativeAd, all (KsScene, Listener)V; concrete PUBLIC FINAL definitions are"
+                + " com.kwad.components.core.b, com.kwad.sdk.api.b and"
+                + " com.kwad.components.ad.fullscreen.a. Note com.kwad.sdk.commercial.g.a is"
+                + " package-private, so getMethods() cannot see its i(String,String)/v/w/e/d."
+                + " A control run (gate disabled, same episode) still played the pre-roll.");
     }
 
     private static void installAdSlotGate(MainHook module, ClassLoader loader) {

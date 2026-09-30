@@ -153,7 +153,27 @@
 不是方法不存在**。
 
 `youku_kwad_ad` / `youku_kwad_api` 因此标为 `withdrawn`，**不留下已证伪的钩子**，
-避免 `matched` 变成误导。剩下的未知项是：该 SDK 内部真正的广告请求入口。
+避免 `matched` 变成误导。
+
+**第三次尝试：从 APK 里读出真实入口，仍然证伪。**
+`dexdump` 优酷 `classes9.dex` 显示快手 SDK 的**对外 API 完全没有混淆**：
+
+```
+com.kwad.sdk.api.KsLoadManager (interface)
+  void loadFullScreenVideoAd(KsScene, FullScreenVideoAdListener)   ← 全屏视频广告位 = 前贴
+  void loadInterstitialAd / loadSplashScreenAd / loadRewardVideoAd
+  void loadFeedAd / loadBannerAd / loadDrawAd / loadNativeAd
+```
+
+`loadFullScreenVideoAd` 正是前贴的槽位。接口声明是抽象的、libxposed 拒钩抽象方法，
+所以改为钩三个具体实现（都是 `PUBLIC FINAL`）：`com.kwad.components.core.b`（路由层）、
+`com.kwad.sdk.api.b`、`com.kwad.components.ad.fullscreen.a`。
+
+**结果：闸门挂载成功，但前贴播完倒计时期间 0 命中。** 关掉闸门跑对照（同一集）依然有前贴。
+
+于是可以下一个明确结论：**优酷前贴不是快手的全屏视频广告请求**。
+快手 SDK 确实在进程里活动，但它服务的是别的广告位；前贴来自**优酷自己的广告系统**，
+走的是本模块尚未定位到的路径。至此优酷侧三个方向（自家配置层 / 快手 SDK / Orange 配置改写）全部证伪。
 
 ## 推送通知广告闸门
 
