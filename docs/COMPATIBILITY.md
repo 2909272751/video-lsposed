@@ -210,6 +210,35 @@ j.d1.x3.b.g.f  (广告回调)
 | 3 | 快手联盟 SDK（含官方 `loadFullScreenVideoAd`） | 挂载成功但 0 命中 |
 | 4 | `AdRequestManager` 两个请求入口 | 首页命中、前贴 0 命中 |
 
+### 第五次尝试：网络层（DNS/hosts）——同样被证伪，且原因是结构性的
+
+前贴的广告判定与创意下载**全部在 native 层**。播放期间 logcat 给出了决定性证据：
+
+```
+DOWNLOADER_LOG: [IPcdnDownloadFilter.cpp::IsPreAd:407] pre ad encountered! url:http://vali-g1.cp31.ott.cibntv.net/youku/6910-...
+DOWNLOADER_LOG: [NtkDownloadFilter.cpp::CreateRequestCallerAndFillOptions:894] pre ad encountered! url:http://vali-g1.cp31.ott.cibntv.net/...
+DnaLog[OpenSourceWrapper] url=https://adsmind.ugdtimg.com/ads_svp_video__*.mp4
+```
+
+`IsPreAd` 与 `OpenSourceWrapper` 在**全部 14 个 dex 里都搜不到**（`grep -a 'isPreAd'`、
+`'IpcdnDownloadFilter'`、`'OpenSourceWrapper'` 全部无命中）——它们只存在于 `.so` 里，
+Java 层无从挂钩。腾讯已验证的那类 Java 闸门在这里没有对应物。
+
+于是尝试 hosts 拦截。创意 CDN 有两个来源，**逐个验证都不成立**：
+
+1. `adsmind.ugdtimg.com`（腾讯优量汇）——实测**拦了也没用**，广告照播，
+   因为该域名并非本次前贴创意的实际来源。
+2. `vali-g1.cp31.ott.cibntv.net`——这条**结构上不可行**：它既是前贴广告创意的主机，
+   **也是正片的主机**（正片同为 `/youku/<id>` 路径）。按主机拦会把正片一起打死。
+
+**结论：优酷前贴无法用本模块现有手段去除。** 它的判定函数在 native 里，
+而广告与正片共用同一 CDN，网络层拦截在结构上不成立。留下的唯一线索是
+`IsPreAd` 判定所用的 URL 特征（广告流为 `/youku/6910-…`、`/youku/6710-…`，
+与正片 ID 有形态差异），要利用它需要对 native 库打补丁，超出 LSPosed 模块的范围。
+
+> 设备 `/system/etc/hosts` 在测试期间通过 bind mount 临时改过一次，**已 unmount 并还原**，
+> 原始内容（含 `ota.googlezip.net` 三行）保持不变。
+
 ## 推送通知广告闸门
 
 三个 App 共用 `NotifyGate`，挂在 `NotificationManager` 上。三个 App 上均为 **4/4 入口挂接**
