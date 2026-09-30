@@ -110,6 +110,7 @@ final class YoukuRules {
         else H.skipped("youku_pause_ad", "disabled in settings");
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
+        reportKwadGateWithdrawn();
 
         // ---- T-1: top channel bar, per-channel native filter ----
         reportChannelFilterSkipped(loader);
@@ -356,6 +357,39 @@ final class YoukuRules {
      * hard-coded types {@code -10090/-10089/-10087/-10086/10000/20000/30000} return earlier in
      * {@code AdRequestManager}, so this gate does not cover them.
      */
+    /**
+     * A-2, second attempt, and the finding that should redirect the next one: the Youku pre-roll is
+     * not served by Youku's own code at all. Logcat during a live pre-roll shows the Kwai Union
+     * (快手联盟) SDK running inside the process - {@code com.kwad.sdk.o},
+     * {@code com.kwad.sdk.commercial.g.a} and the {@code ksad-sdk_core1} threads all appear.
+     * A third-party SDK is loaded into this process, so unlike Youku's own layer its classes do go
+     * through this ClassLoader and are hookable - the one remaining lead that is not native code.
+     *
+     * <p>Probed this round without success: {@code com.kwad.sdk.o} declares only zero-arg methods
+     * ({@code FG/FH/FI/FJ} boolean getters, {@code GE/GF}) and has no {@code init} anywhere in its
+     * hierarchy. {@code com.kwad.sdk.commercial.g.a.i(String,String)} is real - note that
+     * {@code getDeclaredMethods()} shows it while {@code getMethods()} does not, because the Kwai
+     * SDK keeps its entry points package-private, so a public-only lookup silently misses them -
+     * and it was hooked, but it never fires while a pre-roll plays. The
+     * "Long monitor contention ... at com.kwad.sdk.commercial.g.a.i(String,String)" line was a
+     * contended lock, not the ad request. The pre-roll stayed on screen with its countdown intact.
+     *
+     * <p>Nothing is hooked here on purpose. The remaining unknown is the SDK's actual ad request
+     * entry point; leaving a proven-inert hook installed would only make {@code matched} misleading.
+     */
+    private static void reportKwadGateWithdrawn() {
+        H.skipped("youku_kwad_ad", "withdrawn on 11.2.13: the pre-roll is served by the Kwai Union"
+                + " SDK (com.kwad.sdk.*, ksad-sdk_core1 threads), which IS hookable and was probed -"
+                + " but com.kwad.sdk.o has no init in its hierarchy, and"
+                + " com.kwad.sdk.commercial.g.a.i(String,String) is armed yet never fires during a"
+                + " pre-roll; the real ad request entry point inside that SDK is still unknown");
+        H.skipped("youku_kwad_api", "diagnostic only: com.kwad.sdk.o = FG/FH/FI/FJ boolean getters"
+                + " + GE/GF, no init; com.kwad.sdk.commercial.g.a = void i(String,String),"
+                + " v(String,String), v(String,String,boolean), w(String,String), e(String,String),"
+                + " d(String,String), dA(String), register() - all package-private, so getMethods()"
+                + " cannot see them and only getDeclaredMethods() can");
+    }
+
     private static void installAdSlotGate(MainHook module, ClassLoader loader) {
         final String rule = "youku_ad_slot_gate";
         Class<?> manager;

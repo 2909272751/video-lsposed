@@ -138,6 +138,23 @@
 
 因此 `youku_preroll_ad` 按约定标记为 `withdrawn` 并附完整原因——**报告里出现 `matched` 不代表广告被拦**。
 
+**前贴其实来自快手联盟 SDK。** 播放期间的 logcat 显示广告不是优酷自己的代码在投，而是**快手联盟
+（Kwai Union）广告 SDK**跑在进程里：`com.kwad.sdk.o`、`com.kwad.sdk.commercial.g.a`、
+`ksad-sdk_core1` 线程都在活动。第三方 SDK 加载在本进程内，它的类走同一个 ClassLoader，
+**这是目前唯一还没被 native 排除的可钩方向**。本轮试探未成功：
+
+- `com.kwad.sdk.o` 只有无参方法（`FG/FH/FI/FJ` 布尔取值、`GE/GF`），整个继承链里**没有 `init`**。
+- `com.kwad.sdk.commercial.g.a.i(String,String)` 确实存在并已挂钩，但**前贴播放期间 0 命中**——
+  日志里那行 `Long monitor contention ... at ...i(String,String)` 是**锁竞争**，不是广告请求。
+
+顺带修掉一个会误导后续排查的坑：Kwai SDK 的入口方法是 **package-private**，
+`getMethods()`（public）看不到它们，只有 `getDeclaredMethods()` 能看到。
+`R.findByShape` 走的是 public 路径，所以它对 `i(String,String)` 返回未找到——**这是查找方式的问题，
+不是方法不存在**。
+
+`youku_kwad_ad` / `youku_kwad_api` 因此标为 `withdrawn`，**不留下已证伪的钩子**，
+避免 `matched` 变成误导。剩下的未知项是：该 SDK 内部真正的广告请求入口。
+
 ## 推送通知广告闸门
 
 三个 App 共用 `NotifyGate`，挂在 `NotificationManager` 上。三个 App 上均为 **4/4 入口挂接**
