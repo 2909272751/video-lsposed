@@ -183,6 +183,11 @@ public final class MainHook extends XposedModule {
         Config.Settings settings = Config.resolve(context, remote);
         H.configSource = settings.source;
         H.diag("resolved source=" + settings.source);
+        if (settings.blockPushNotify) {
+            installPushNotify();
+        } else {
+            H.skipped("push_notify", "disabled in settings");
+        }
         if (Config.PACKAGE.equals(target)) {
             H.info("event=config_source=" + settings.source
                     + " splash=" + settings.blockSplash
@@ -322,6 +327,102 @@ public final class MainHook extends XposedModule {
             }
         } catch (Throwable error) {
             H.warn("event=version_probe_failed " + H.describe(error));
+        }
+    }
+
+    /**
+     * 推送通知广告闸门：挂 {@code NotificationManager}，三个 App 共用同一套判据。
+     *
+     * <p>{@code notify(...)} 是 App 进程内所有通知的唯一出口——厂商推送、自建长连接、轮询
+     * 拉回来的推广最终都要调它；而且它是平台类、不参与 R8 混淆，App 改版改名的是它自己的类，
+     * 这里不受影响。
+     *
+     * <p>{@code createNotificationChannel} 只观测不拦截：把渠道拦掉会让后续 notify 抛异常，更糟。
+     * <b>追剧提醒、播放与下载通知必须活着</b>，所以判据在 {@link NotifyGate} 里刻意避开
+     * 播放/观看/追剧/更新/下载这些词——这是视频 App 相对音乐 App 最容易误伤的地方。
+     */
+    private void installPushNotify() {
+        final int expect = 4;
+        int got = 0;
+        Class<?>[] plain = {int.class, android.app.Notification.class};
+        Class<?>[] tagged = {String.class, int.class, android.app.Notification.class};
+        for (Class<?>[] signature : new Class<?>[][]{plain, tagged}) {
+            final boolean withTag = signature == tagged;
+            try {
+                Method target = android.app.NotificationManager.class.getDeclaredMethod("notify", signature);
+                hook(target).setId("qlc_push_notify_" + (withTag ? "tagged" : "plain"))
+                        .intercept(new XposedInterface.Hooker() {
+                            @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                                // 判据全在 NotifyGate 里，任何异常它自己 fail-open 放行。
+                                NotifyGate.Decision decision = NotifyGate.evaluate(
+                                        (android.app.Notification) chain.getArg(withTag ? 2 : 1),
+                                        withTag ? (String) chain.getArg(0) : null);
+                                if (decision.suppress) {
+                                    // 不调 proceed() = 通知根本不下发；追剧/播放/下载通知完全不受影响。
+                                    H.info("push_notify suppressed by: " + decision.reason);
+                                    return null;
+                                }
+                                return chain.proceed(); // 放行路径零日志、零分配
+                            }
+                        });
+                H.info("hooked: push_notify notify(" + signature.length + " args)");
+                got++;
+            } catch (Throwable error) {
+                H.warn("push_notify notify hook unavailable " + H.describe(error));
+            }
+        }
+        try {
+            Method target = android.app.NotificationManager.class.getDeclaredMethod(
+                    "createNotificationChannel", android.app.NotificationChannel.class);
+            hook(target).setId("qlc_push_notify_channel").intercept(new XposedInterface.Hooker() {
+                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    try {
+                        NotifyGate.Decision d = NotifyGate.evaluateChannel(
+                                (android.app.NotificationChannel) chain.getArg(0));
+                        if (d.suppress) H.info("push_notify ad channel: " + d.reason);
+                    } catch (Throwable ignored) {}
+                    return result;
+                }
+            });
+            H.info("hooked: push_notify createNotificationChannel");
+            got++;
+        } catch (Throwable error) {
+            H.warn("push_notify channel hook unavailable " + H.describe(error));
+        }
+        try {
+            Method target = android.app.NotificationManager.class.getDeclaredMethod(
+                    "createNotificationChannels", java.util.List.class);
+            hook(target).setId("qlc_push_notify_channels").intercept(new XposedInterface.Hooker() {
+                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    try {
+                        Object arg = chain.getArg(0);
+                        if (arg instanceof java.util.List) {
+                            for (Object channel : (java.util.List<?>) arg) {
+                                NotifyGate.Decision d = NotifyGate.evaluateChannel(
+                                        (android.app.NotificationChannel) channel);
+                                if (d.suppress) H.info("push_notify ad channel: " + d.reason);
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    return result;
+                }
+            });
+            H.info("hooked: push_notify createNotificationChannels");
+            got++;
+        } catch (Throwable error) {
+            H.warn("push_notify channels hook unavailable " + H.describe(error));
+        }
+        if (got < expect) {
+            // 只挂上部分入口必须单独报出，不许算成"全部生效"。
+            H.miss("push_notify", "只挂上 " + got + "/" + expect + " 个通知入口，已挂上的判定仍有效");
+        } else {
+            // 没有真机广告通知时，用固定样本证明"判定函数本身"是对的（含追剧/播放/下载负样本）。
+            String selfTest = NotifyGate.selfTest();
+            H.info(selfTest);
+            H.hooked("push_notify", "通知下发与渠道创建入口已挂接（" + got + "/" + expect
+                    + "）；" + selfTest);
         }
     }
 

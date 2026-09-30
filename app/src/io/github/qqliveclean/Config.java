@@ -63,15 +63,29 @@ public final class Config {
      */
     public static final String GROUP = "qqlive_clean_settings";
 
-    /** Build the hook anchors below were reverse-engineered from (log only, not a gate). */
+    /**
+     * 逐版本实测记录（真机装包 → 冷启动 → 读落盘报告），详见 docs/COMPATIBILITY.md。
+     *
+     * <p>这里的 verified* 是<b>日志参考值，不是门闸</b>：rule-by-rule 解析各自报
+     * matched/miss，App 升级只会让个别规则退化，不会整体停用。
+     *
+     * <p>腾讯视频 9.04.55.32321 与优酷 11.2.15 是前序逆向得到的版本号，<b>高于豌豆荚可获取的最高版本</b>
+     * （32299 / 917），本轮未能在真机上复现，故 VERIFIED_* 仍保留原值以免丢失来源信息。
+     */
     public static final int VERIFIED_VERSION_CODE = 32321;
     public static final String VERIFIED_VERSION_NAME = "9.04.55.32321";
-    /** Coarse floor: older builds predate the QAd splash SDK / KMM tab bar entirely. */
-    public static final int MIN_VERSION_CODE = 31000;
+    /** 全量生效的实测版本：9.04.51.32299 起 18/0。 */
+    public static final int VERIFIED_QQLIVE_TESTED_CODE = 32299;
+    public static final String VERIFIED_QQLIVE_TESTED_NAME = "9.04.51.32299";
+    /** 9.03.58.31594 已掉到 15/3；再往下 31245 是 13/5，所以地板定在 32000 更贴近实测。 */
+    public static final int MIN_VERSION_CODE = 32000;
 
     /** Same pair for Youku (com.youku.phone 11.2.1; evidence: scratch-recon/youku-gates.md). */
     public static final int VERIFIED_YOUKU_VERSION_CODE = 920;
     public static final String VERIFIED_YOUKU_VERSION_NAME = "11.2.15";
+    /** 11.2.13 → 11.1.65 四个版本实测全部 8/0，零 miss。 */
+    public static final int VERIFIED_YOUKU_TESTED_CODE = 917;
+    public static final String VERIFIED_YOUKU_TESTED_NAME = "11.2.13";
     /** 0 = no floor for Youku: every rule resolves on its own and reports its own miss. */
     public static final int MIN_YOUKU_VERSION_CODE = 0;
     public static final int VERIFIED_IQIYI_VERSION_CODE = 800170952;
@@ -165,10 +179,13 @@ public final class Config {
     // ---- 诊断 ----
     public static final String DEBUG_LOG = "debug_log";
 
+    /** 拦截推送通知广告（三个 App 共用一套判据，见 NotifyGate）。 */
+    public static final String BLOCK_PUSH_NOTIFY = "block_push_notify";
+
     /** Every key the settings page may publish to the target process. */
     public static final String[] EXPOSED_KEYS = {
             BLOCK_SPLASH, BLOCK_SPLASH_PRELOAD, BLOCK_PLAYER_ADS, BLOCK_AD_REQUESTS, BLOCK_MINE_AD,
-            BLOCK_FEED_AUTOPLAY, DEBUG_LOG,
+            BLOCK_FEED_AUTOPLAY, BLOCK_PUSH_NOTIFY, DEBUG_LOG,
             SHOW_SHORT_VIDEO, SHOW_VIP, SHOW_LIVE, SHOW_DOKI,
             SHOW_MESSAGE, SHOW_GALLERY, SHOW_GOODS, SHOW_MINE,
             SHOW_CHANNEL_MASTER, SHOW_CHANNEL_TV, SHOW_CHANNEL_ANIME,
@@ -194,6 +211,7 @@ public final class Config {
             case IQIYI_BLOCK_SPLASH:
             case IQIYI_HIDE_HOME_TOP_AD:
             case IQIYI_HIDE_MINE_BANNER:
+            case BLOCK_PUSH_NOTIFY:
                 return true;     // ad blocking is on by default
             case DEBUG_LOG:
             case REDUCE_PRELOAD:
@@ -272,6 +290,7 @@ public final class Config {
         final boolean blockAdRequests;
         final boolean blockMineAd;
         final boolean blockFeedAutoplay;
+        final boolean blockPushNotify;
         final boolean debugLog;
         final boolean[] hiddenPageTypes;
         final String[] hiddenChannelNames;
@@ -294,7 +313,7 @@ public final class Config {
 
         Settings(String source, boolean blockSplash, boolean blockSplashPreload,
                  boolean blockPlayerAds, boolean blockAdRequests, boolean blockMineAd,
-                 boolean blockFeedAutoplay, boolean debugLog,
+                 boolean blockFeedAutoplay, boolean blockPushNotify, boolean debugLog,
                  boolean[] hiddenPageTypes, String[] hiddenChannelNames, boolean reducePreload,
                  boolean youkuBlockSplash, boolean youkuBlockAdSlot, boolean youkuHideMinePromos,
                  boolean youkuBlockPauseAd, boolean youkuHideBottomBar,
@@ -309,6 +328,7 @@ public final class Config {
             this.blockAdRequests = blockAdRequests;
             this.blockMineAd = blockMineAd;
             this.blockFeedAutoplay = blockFeedAutoplay;
+            this.blockPushNotify = blockPushNotify;
             this.debugLog = debugLog;
             this.hiddenPageTypes = hiddenPageTypes;
             this.hiddenChannelNames = hiddenChannelNames;
@@ -564,6 +584,7 @@ public final class Config {
                 value(provider, null, BLOCK_AD_REQUESTS),
                 value(provider, null, BLOCK_MINE_AD),
                 value(provider, null, BLOCK_FEED_AUTOPLAY),
+                value(provider, null, BLOCK_PUSH_NOTIFY),
                 value(provider, null, DEBUG_LOG),
                 hidden, hiddenChannels(provider, null), value(provider, null, REDUCE_PRELOAD),
                 value(provider, null, YOUKU_BLOCK_SPLASH),
@@ -600,6 +621,7 @@ public final class Config {
                 value(null, remote, BLOCK_AD_REQUESTS),
                 value(null, remote, BLOCK_MINE_AD),
                 value(null, remote, BLOCK_FEED_AUTOPLAY),
+                value(null, remote, BLOCK_PUSH_NOTIFY),
                 value(null, remote, DEBUG_LOG),
                 hidden, hiddenChannels(null, remote), value(null, remote, REDUCE_PRELOAD),
                 value(null, remote, YOUKU_BLOCK_SPLASH),

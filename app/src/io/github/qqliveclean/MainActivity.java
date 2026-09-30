@@ -125,6 +125,12 @@ public final class MainActivity extends Activity {
         addNote(tabsCard, "关闭开关隐藏对应入口，首页和个人中心始终保留。修改后重启腾讯视频生效。", 12);
         body.addView(tabsCard);
 
+        section(body, "通知");
+        LinearLayout qqliveNotifyCard = card();
+        toggle(qqliveNotifyCard, Config.BLOCK_PUSH_NOTIFY, "拦截推送通知广告",
+                "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
+        body.addView(qqliveNotifyCard);
+
         body = pageBodies[1];
         section(body, "启动与播放");
         LinearLayout youkuCard = card();
@@ -152,6 +158,12 @@ public final class MainActivity extends Activity {
                 "所有入口都会消失，默认关闭", false);
         body.addView(youkuTabs);
 
+        section(body, "通知");
+        LinearLayout youkuNotifyCard = card();
+        toggle(youkuNotifyCard, Config.BLOCK_PUSH_NOTIFY, "拦截推送通知广告",
+                "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
+        body.addView(youkuNotifyCard);
+
         body = pageBodies[2];
         section(body, "启动广告");
         LinearLayout qiyiCard = card();
@@ -174,6 +186,12 @@ public final class MainActivity extends Activity {
         toggle(qiyiTabs, Config.IQIYI_SHOW_PLUS, "显示中间的「＋」入口", null, true);
         toggle(qiyiTabs, Config.IQIYI_SHOW_MEMBER, "显示「会员」", null, true);
         body.addView(qiyiTabs);
+
+        section(body, "通知");
+        LinearLayout qiyiNotifyCard = card();
+        toggle(qiyiNotifyCard, Config.BLOCK_PUSH_NOTIFY, "拦截推送通知广告",
+                "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
+        body.addView(qiyiNotifyCard);
 
         body = pageBodies[0];
         section(body, "诊断与恢复");

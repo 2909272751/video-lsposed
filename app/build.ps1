@@ -20,10 +20,25 @@ $tools = (Get-ChildItem -LiteralPath (Join-Path $sdk 'build-tools') -Directory |
     Sort-Object Name -Descending | Select-Object -First 1).FullName
 $androidJarSource = Join-Path $sdk "platforms\$platform\android.jar"
 $javac = Join-Path $jdk 'bin\javac.exe'
+$java = Join-Path $jdk 'bin\java.exe'
 $jar = Join-Path $jdk 'bin\jar.exe'
 $keytool = Join-Path $jdk 'bin\keytool.exe'
 $aapt2 = Join-Path $tools 'aapt2.exe'
-$d8 = Join-Path $tools 'd8.bat'
+# Some build-tools installs ship a d8.bat whose d8.jar is missing (34.0.0 has
+# lib\apksigner.jar only), and d8.bat then runs a classpath that does not exist and
+# dies with a bare ClassNotFoundException. Resolve the D8 jar explicitly instead.
+# Order matters: an explicit R8_JAR wins, then a standalone modern r8-<ver>.jar under
+# <sdk>\d8, and only then whatever d8.jar the SDK ships. The d8.jar bundled with old
+# build-tools (R8 3.3.20) dies here with "Cannot invoke String.length() because
+# <parameter1> is null" while dexing, so it must be the last resort, not the first.
+$d8Candidates = @()
+if ($env:R8_JAR) { $d8Candidates += $env:R8_JAR }
+$d8Candidates += @(Get-ChildItem -LiteralPath (Join-Path $sdk 'd8') -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'r8-*.jar' } | Sort-Object Name -Descending | ForEach-Object FullName)
+$d8Candidates += @(Get-ChildItem -LiteralPath (Join-Path $sdk 'build-tools') -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq 'd8.jar' } | ForEach-Object FullName)
+$d8Jar = $d8Candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if (-not $d8Jar) { throw "No D8 jar found. Set `$env:R8_JAR to a com.android.tools:r8 jar from dl.google.com/dl/android/maven2." }
 $zipalign = Join-Path $tools 'zipalign.exe'
 $apksigner = Join-Path $tools 'apksigner.bat'
 $stage = Join-Path $env:TEMP ('qlc-' + [guid]::NewGuid().ToString('N'))
@@ -38,7 +53,7 @@ Write-Host "sdk         : $sdk (platform $platform)"
 Write-Host "build-tools : $tools"
 Write-Host "jdk         : $jdk"
 
-foreach ($needed in @($androidJarSource, $javac, $jar, $keytool, $aapt2, $d8, $zipalign, $apksigner)) {
+foreach ($needed in @($androidJarSource, $javac, $java, $jar, $keytool, $aapt2, $zipalign, $apksigner)) {
     if (-not (Test-Path -LiteralPath $needed)) { throw "Build tool missing: $needed" }
 }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -67,7 +82,7 @@ try {
     Run-Native 'Module compilation' { & $javac -encoding UTF-8 -nowarn -source 8 -target 8 -bootclasspath $androidJar -classpath $compilePath -d (Join-Path $stage 'classes') @sources }
     $classesJar = Join-Path $stage 'classes.jar'
     Run-Native 'JAR creation' { & $jar -cf $classesJar -C (Join-Path $stage 'classes') . }
-    Run-Native 'DEX conversion' { & $d8 --min-api 26 --lib $androidJar --output (Join-Path $stage 'dex') $classesJar $serviceJar }
+    Run-Native 'DEX conversion' { & $java -Xmx3072M -cp $d8Jar com.android.tools.r8.D8 --min-api 26 --lib $androidJar --output (Join-Path $stage 'dex') $classesJar $serviceJar }
 
     Write-Host 'Packaging Android resources'
     $compiledRes = Join-Path $stage 'resources.zip'
