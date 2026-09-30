@@ -108,6 +108,8 @@ final class YoukuRules {
         // ---- P-1: full-screen pause ad ----
         if (settings.youkuBlockPauseAd) installPauseAdGate(module, loader);
         else H.skipped("youku_pause_ad", "disabled in settings");
+        // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
+        reportPreRollAdWithdrawn();
 
         // ---- T-1: top channel bar, per-channel native filter ----
         reportChannelFilterSkipped(loader);
@@ -384,6 +386,45 @@ final class YoukuRules {
     }
 
     // ------------------------------------------------------------------ B-2
+
+    /**
+     * A-2 pre-roll. The ad is real and reproducible on 11.2.13 while logged out (screenshot with a
+     * live countdown, an 「广告」tag and 会员可关闭此广告), but every device-probed anchor for it
+     * is either inert or not the decision:
+     *
+     * <ul>
+     *   <li>{@code j.b1.w3.b.c.d.u(int)Z} is gone in this build (11.2.15 finding, still true here),
+     *       and {@code AdRequestManager} exposes only void a/b/c/d - no decision method at all.</li>
+     *   <li>The Orange config surface was read straight off the device and two switches were then
+     *       tested by rewriting the cached files under
+     *       {@code files/occ_configs/} and cold-starting the same episode:
+     *       <ul>
+     *         <li>{@code yk_adsdk_syscfg}: every ad type flipped {@code "enable":1 -> 0}.
+     *             The pre-roll still played (105 s countdown, screenshot kept). That config governs
+     *             ad-slot capabilities (shake, responsive modes), not whether a pre-roll is served.</li>
+     *         <li>{@code one_ad_config}: {@code "enable_youku_ssp":"1" -> "0"}. The pre-roll still
+     *             played (109 s countdown, screenshot kept), so the SSP toggle is not consulted for
+     *             this slot either.</li>
+     *       </ul>
+     *       Both files were restored to their original values afterwards.</li>
+     *   <li>{@code OrangeConfigImpl} declares only {@code a/3} and {@code j/2}; the 4-arg
+     *       {@code a(String,String,String,String)} that the working pause-ad rule uses comes from a
+     *       superclass. Neither {@code yk_adsdk_syscfg} nor {@code one_ad_config} was observed on
+     *       any of those getters during playback, so they are read by the ad plugin directly.</li>
+     * </ul>
+     *
+     * <p>Reported as withdrawn rather than {@code miss}: the rule is not failing to find an anchor,
+     * it is established that this configuration surface does not control the pre-roll.
+     */
+    private static void reportPreRollAdWithdrawn() {
+        H.skipped("youku_preroll_ad", "withdrawn on 11.2.13: the pre-roll does play while logged out"
+                + " (verified on screen), but no device-probed anchor controls it -"
+                + " j.b1.w3.b.c.d.u(int)Z is absent, AdRequestManager has only void methods,"
+                + " and rewriting the cached Orange configs yk_adsdk_syscfg (*.enable) and"
+                + " one_ad_config (enable_youku_ssp) to 0 left the ad on screen in both cases");
+        H.skipped("youku_orange_api", "diagnostic only: OrangeConfigImpl declares a/3 and j/2;"
+                + " the 4-arg a(String,String,String,String) used by youku_pause_ad is inherited");
+    }
 
     /**
      * {@code j.b1.s.o0.g.c(boolean)} is the ONLY caller of
