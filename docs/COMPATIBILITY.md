@@ -173,7 +173,42 @@ com.kwad.sdk.api.KsLoadManager (interface)
 
 于是可以下一个明确结论：**优酷前贴不是快手的全屏视频广告请求**。
 快手 SDK 确实在进程里活动，但它服务的是别的广告位；前贴来自**优酷自己的广告系统**，
-走的是本模块尚未定位到的路径。至此优酷侧三个方向（自家配置层 / 快手 SDK / Orange 配置改写）全部证伪。
+走的是本模块尚未定位到的路径。
+
+**第四次尝试：优酷自家广告层（`AdRequestManager`）。**
+`dexdump` `classes2.dex` 拿到真实结构：
+
+```
+com.youku.oneadsdk.request.AdRequestManager
+  void d(int, RequestInfo, j.d1.x3.b.g.f)V
+  void c(AdRequestManager$RequestParams)V
+
+j.d1.x3.b.g.f  (广告回调)
+  void onFailed(int, String)V          ← 优酷自己屏蔽广告位时调的就是它
+  void a(Object, Object, String)V
+```
+
+这里纠正了此前一处**错误的结论**：之前记为「`AdRequestManager` 只有 void 方法」，
+其实 `d(int, RequestInfo, f)` 正是请求入口。改为拦截后**调用优酷自己的
+`onFailed(3, …)` 屏蔽分支**再返回（与腾讯已验证的 `ad_request_gate` 同构），
+让播放器走它现成的「无广告」优雅路径。
+
+结果：闸门挂载成功并在**首页信息流命中 1 次**，但**前贴播放期间两个入口都是 0 命中**，
+前贴照播到倒计时结束（103 秒、54 秒两个样本）。**前贴请求同样绕开了 `AdRequestManager`。**
+
+`youku_ad_request` 标为 `withdrawn`——注意它与前面几条性质不同：
+**不是完全无效，而是「机制成立但未获实证」**。请求确实被拦下并替换成优酷自己的屏蔽分支了，
+但没有任何广告被观察到消失，按本模块的取证标准（横幅消失 **且** 闸门命中）不足以宣称它在拦广告，
+所以不留在代码里让 `matched` 夸大结论。
+
+至此优酷侧四条路径全部证伪，且每条都是基于真机 dex 签名而非猜测：
+
+| # | 方向 | 结果 |
+|---|---|---|
+| 1 | 自家配置层 `j.b1.w3.b.c.d` | 类/方法不存在 |
+| 2 | Orange 缓存配置改写 | 改为 0 后广告照播 |
+| 3 | 快手联盟 SDK（含官方 `loadFullScreenVideoAd`） | 挂载成功但 0 命中 |
+| 4 | `AdRequestManager` 两个请求入口 | 首页命中、前贴 0 命中 |
 
 ## 推送通知广告闸门
 

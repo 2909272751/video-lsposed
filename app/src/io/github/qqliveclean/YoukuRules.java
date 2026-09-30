@@ -52,6 +52,7 @@ final class YoukuRules {
     private static final AtomicBoolean COLD_GATE_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean AD_SLOT_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean PAUSE_AD_HIT = new AtomicBoolean(false);
+    // The code and message Youku itself passes when it suppresses an ad slot.
     private static final AtomicBoolean BOTTOM_BAR_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean TAB_FILTER_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean HOME_TOP_AD_HIT = new AtomicBoolean(false);
@@ -111,6 +112,7 @@ final class YoukuRules {
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
+        reportAdRequestGateWithdrawn();
 
         // ---- T-1: top channel bar, per-channel native filter ----
         reportChannelFilterSkipped(loader);
@@ -414,6 +416,55 @@ final class YoukuRules {
                 + " com.kwad.components.ad.fullscreen.a. Note com.kwad.sdk.commercial.g.a is"
                 + " package-private, so getMethods() cannot see its i(String,String)/v/w/e/d."
                 + " A control run (gate disabled, same episode) still played the pre-roll.");
+    }
+
+    /**
+     * A-4: the app's own ad request, located by reading the shipped dex rather than guessing.
+     *
+     * <p>{@code dexdump} of the Youku APK's classes2.dex gives the real shape of the ad layer:
+     *
+     * <pre>
+     *   com.youku.oneadsdk.request.AdRequestManager
+     *     void d(int, com.youku.oneadsdk.request.builder.RequestInfo, j.d1.x3.b.g.f)V
+     *     void c(com.youku.oneadsdk.request.AdRequestManager$RequestParams)V
+     *
+     *   j.d1.x3.b.g.f   (the ad callback)
+     *     void onFailed(int, String)V
+     *     void a(Object, Object, String)V
+     * </pre>
+     *
+     * <p>An earlier note recorded this class as "only void methods" and stopped there, which was the
+     * wrong conclusion - {@code d(int, RequestInfo, f)} is exactly a request entry point, and
+     * {@code onFailed(int, String)} is precisely the call Youku makes itself when it suppresses an
+     * ad slot. Both entry points were hooked to invoke that own failure branch instead of
+     * requesting.
+     *
+     * <p>Result: it armed cleanly and fired - but only once, on the home feed. Neither overload
+     * fires while a pre-roll plays, and the pre-roll played to completion with its countdown
+     * intact both times (103s and 54s samples). So the pre-roll request bypasses
+     * {@code AdRequestManager} entirely, the same way it bypassed the Kwai SDK.
+     *
+     * <p>Withdrawn rather than left installed. The mechanism is sound - the request really is
+     * suppressed and replaced with Youku's own "slot blocked" branch - but no ad was ever observed
+     * disappearing, so by the module's own proof-of-effect standard (banner absent <i>and</i> gate
+     * hit) this is an unproven hook, and leaving it in would make {@code matched} overstate what is
+     * actually known. The next attempt should look for the pre-roll's own request path rather than
+     * for yet another overload of a manager that does not serve it.
+     */
+    private static void reportAdRequestGateWithdrawn() {
+        H.skipped("youku_ad_request", "withdrawn on 11.2.13: unproven, not inert. Both real entry"
+                + " points of com.youku.oneadsdk.request.AdRequestManager - d(int, RequestInfo,"
+                + " j.d1.x3.b.g.f) and c(RequestParams) - were hooked to replace the request with"
+                + " Youku's own onFailed(3) blocked-slot branch. The gate armed and fired once on"
+                + " the home feed, but never fired during a pre-roll, and the pre-roll played to"
+                + " completion with its countdown intact (103s, 54s samples). The pre-roll request"
+                + " therefore bypasses AdRequestManager too. Kept off because no ad was observed"
+                + " disappearing, so it cannot honestly be reported as blocking ads.");
+        H.skipped("youku_ad_request_api", "diagnostic only, from dexdump of the Youku APK:"
+                + " com.youku.oneadsdk.request.AdRequestManager declares d(int, RequestInfo,"
+                + " j.d1.x3.b.g.f)V, c(RequestParams)V and b()AdRequestManager; the callback"
+                + " j.d1.x3.b.g.f declares onFailed(int, String) and a(Object, Object, String);"
+                + " RequestParams carries fields adType, callback, adResponse, clazz, content, id.");
     }
 
     private static void installAdSlotGate(MainHook module, ClassLoader loader) {
