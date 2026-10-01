@@ -158,6 +158,14 @@ public final class MainActivity extends Activity {
                 "所有入口都会消失，默认关闭", false);
         body.addView(youkuTabs);
 
+        section(body, "频道入口");
+        LinearLayout youkuChannels = card();
+        addNote(youkuChannels, "关闭后顶部频道栏不再显示该入口；只隐藏界面，不改动优酷的数据与选片逻辑。", 12);
+        for (String[] entry : Config.CHANNEL_CATALOG) {
+            toggle(youkuChannels, entry[0], "显示「" + entry[1] + "」", null, true);
+        }
+        body.addView(youkuChannels);
+
         section(body, "通知");
         LinearLayout youkuNotifyCard = card();
         toggle(youkuNotifyCard, Config.BLOCK_PUSH_NOTIFY, "拦截推送通知广告",
@@ -300,8 +308,13 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(state);
     }
 
-    private String versionText(String packageName, int verifiedCode) {
-        try {
+    /** The app whose settings page is showing; the payload is delivered to it on every write. */
+    private String currentPagePackage() {
+        return selectedPage == 0 ? Config.PACKAGE
+                : selectedPage == 1 ? Config.PACKAGE_YOUKU : Config.PACKAGE_IQIYI;
+    }
+
+    private String versionText(String packageName, int verifiedCode) {        try {
             android.content.pm.PackageInfo info =
                     getPackageManager().getPackageInfo(packageName, 0);
             return info.versionName + (info.versionCode == verifiedCode
@@ -344,7 +357,7 @@ public final class MainActivity extends Activity {
         control.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(CompoundButton button, boolean checked) {
                 if (refreshing) return;
-                if (!App.write(MainActivity.this, key, checked)) {
+                if (!App.write(MainActivity.this, key, checked, currentPagePackage())) {
                     button.setOnCheckedChangeListener(null);
                     button.setChecked(!checked);
                     button.setOnCheckedChangeListener(this);

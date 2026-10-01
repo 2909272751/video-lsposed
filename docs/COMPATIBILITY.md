@@ -363,6 +363,69 @@ hit=youku_csj_dsp_off CSJ/穿山甲 DSP disabled via the app's own config switch
 另外，优酷 feed 上 `uiautomator dump` 会报 **`ERROR: could not get idle state`**
 （自动播放让界面永远不空闲），此时只能用截图 + 已知坐标，不能指望 dump。
 
+### 私人 DNS 是长期存在的混淆因素，但不是原因（2026-10-01 19:3x）
+
+用户指出：手机上开着**带去广告的私人 DNS**。查证属实：
+
+```
+private_dns_mode=hostname   private_dns_specifier=t363292083.6.00p.net
+```
+
+这个 DNS 在整个优酷排查过程中一直是开着的，此前没有任何一轮测试记录过它——
+**一个从头到尾没被控制的变量**。关闭后（`mode=off`）重测：起播正常，
+但 17 个控制点依然 0 命中，多剧目连播也全部 0 命中。
+
+> **结论：私人 DNS 去广告不是「优酷不下发视频侧物料」的原因。**
+> 但它是一个必须记录在案的前置条件：**今后任何优酷广告测试都必须先写明 DNS 状态。**
+> 目前设备上私人 DNS 处于**关闭**状态（用户要求），保持不变。
+
+### 更重要的发现：设置投递链在真机上一直是断的（2026-10-01 19:5x）
+
+测试频道过滤时发现，规则读到的是「all channels visible」，而设置文件里明明写着关闭。
+一路查到根因：
+
+```
+event=config_source=remote_preferences cache=empty file=unreadable files=absent
+       provider=IllegalArgumentException: Unknown authority io.github.qqliveclean.config
+```
+
+三条投递路径全部失效：
+
+1. **provider 路由**——被包可见性挡住（`content call` 从 shell 能解析，从目标进程不能）。
+2. **文件路由**——被 scoped storage 挡住（`files=absent`）。
+3. **Intent extra 路由**——`App.applyToTarget(...)` **在整个源码里没有任何调用者，是死代码。**
+
+于是目标进程永远拿不到用户设置，`Config.resolve()` 一路回退到内置默认值，
+而 UI 照样弹「已开启，重启目标应用生效」。**用户拨了开关，实际什么都没变。**
+
+修复：`App.write()` 在提交并 `publish()` 之后，对当前页面对应的目标包调用
+`applyToTarget(...)`（MainActivity 通过 `currentPagePackage()` 传入）。
+修复后拨动开关会拉起目标 App 并投递配置，日志随即变成：
+
+```
+rule=youku_channel_filter status=hooked … hidden=1 of 5
+config_source=module_provider
+```
+
+**`hidden=1` 是设置第一次真正到达被 hook 的进程的证据**——这条链修好之前，
+本文件里所有依赖用户开关的规则，测的都是内置默认值。
+
+### 频道开关此前从未出现在设置页（半成品功能）
+
+`Config.CHANNEL_CATALOG`（大师/电视剧/动漫/电影/综艺）和 `hiddenChannels()` 一直存在，
+但 `MainActivity` 里**没有任何一处引用 `SHOW_CHANNEL_*`**——设置页根本没有这些开关，
+所以 `hiddenChannelNames` 永远是空数组。已在优酷页补上「频道入口」分组。
+
+### `youku_channel_filter` 当前状态：可读设置，尚未命中视图
+
+- 数据层执行改为 **View 层隐藏**（原 `p`/`e` 锚点会连带替换 teen-mode 与 `isSelection` 守卫）。
+- 读取设置已验证：`hidden=1 of 5`。
+- **但至今没有 `hit=youku_channel_filter` 运行时命中行**，因此**本项不计入成果**。
+  已尝试把搜索根从 `kf_root_page` 放宽到整个 decorView，仍未命中。
+  下一步不是继续猜坐标，而是**把实际视图树打出来**（模块内一次性 dump decor 层级），
+  看频道栏的真实容器结构再定位——与前贴那次「猜锚点」是相反的教训：
+  **有确定的观测手段时，不要靠猜。**
+
 ### 附：本轮的方法论收获（比结论更重要）
 
 **adb 每次往返要十几秒，屏幕会在往返之间掉进 Doze**，于是「改了没生效」和「改动没加载」无法区分，

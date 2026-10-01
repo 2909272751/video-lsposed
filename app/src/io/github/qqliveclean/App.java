@@ -37,11 +37,25 @@ public final class App extends Application {
     }
 
     static boolean write(Context context, String key, boolean value) {
+        return write(context, key, value, null);
+    }
+
+    /**
+     * Commits the change and, when {@code targetPackage} is given, hands the whole payload to that
+     * app so it takes effect without waiting for the provider.
+     *
+     * <p>This delivery step used to be missing: {@link #applyToTarget} had no caller at all, so on
+     * a device where the provider is unreachable (package visibility) and the file routes are
+     * blocked (scoped storage), every switch silently fell back to its built-in default while the
+     * UI still reported success. Shipping the payload on write is what makes the setting real.
+     */
+    static boolean write(Context context, String key, boolean value, String targetPackage) {
         if (context == null) return false;
         try {
             boolean ok = store(context).edit().putBoolean(key, value).commit();
             if (!ok) lastError = "commit returned false for " + key;
             publish(context);
+            if (ok && targetPackage != null) applyToTarget(context, targetPackage);
             return ok;
         } catch (Throwable error) {
             lastError = "write " + key + ": " + error;

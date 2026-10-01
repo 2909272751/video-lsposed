@@ -33,8 +33,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       {@code AdPauseFullScreenPlugin.r0} is answered {@code "false"} (the app's own
  *       disabled value). See {@link #installPauseAdGate} for why the field itself is not
  *       hooked.</li>
- *   <li><b>T-1 {@code youku_channel_filter}</b> - deliberately NOT armed; reported as a miss
- *       with its reason (see {@link #reportChannelFilterSkipped}).</li>
+ *   <li><b>T-1 {@code youku_channel_filter}</b> - enforced at the <b>View layer</b> rather
+ *       than on the app's data-layer filter: the data-layer anchors {@code p}/{@code e} carry
+ *       their own teen-mode and {@code isSelection} guards inside the original body, so
+ *       replacing them wholesale could drop the selected channel. Hiding the tab view leaves
+ *       the data model and all selection logic untouched. See {@link #filterTopChannels}.</li>
  * </ol>
  *
  * <p>Not hookable here on purpose: {@code PlayerEmbeddedStreamAdProviderImpl.hasCutAd} - the
@@ -58,9 +61,11 @@ final class YoukuRules {
     // The code and message Youku itself passes when it suppresses an ad slot.
     private static final AtomicBoolean BOTTOM_BAR_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean TAB_FILTER_HIT = new AtomicBoolean(false);
+    private static final AtomicBoolean CHANNEL_FILTER_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean HOME_TOP_AD_HIT = new AtomicBoolean(false);
     private static WeakReference<View> lastTopCard = new WeakReference<View>(null);
     private static WeakReference<ViewGroup> lastTabBar = new WeakReference<ViewGroup>(null);
+    private static WeakReference<ViewGroup> lastChannelBar = new WeakReference<ViewGroup>(null);
 
     /**
      * Pre-allocated argument vectors. {@code intercept} must not allocate, so the arrays are
@@ -134,9 +139,8 @@ final class YoukuRules {
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
         reportAdRequestGateWithdrawn();
-
-        // ---- T-1: top channel bar, per-channel native filter ----
-        reportChannelFilterSkipped(loader);
+        // T-1 (top channel bar) is reported from installBottomTabFilter: it runs on the
+        // same Activity-resume pass as the bottom-bar filter and works on the View layer.
     }
 
     /** 11.2.15 inlines HomeBottomNav.b(List); trim only its five rendered buttons. */
@@ -163,6 +167,7 @@ final class YoukuRules {
                             @Override public void run() {
                                 if (filtering) filterBottomBar(activity, settings);
                                 if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
+                                filterTopChannels(activity, settings);
                             }
                         }, 500);
                         if (settings.youkuBlockAdSlot) {
@@ -179,6 +184,10 @@ final class YoukuRules {
             });
             if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; runs after Activity resume");
             else H.skipped("youku_tab_filter", "all tabs visible");
+            if (settings.hiddenChannelNames.length != 0)
+                H.hooked("youku_channel_filter", "top channel row, View layer (data model untouched): hidden="
+                        + settings.hiddenChannelNames.length + " of " + Config.CHANNEL_CATALOG.length);
+            else H.skipped("youku_channel_filter", "all channels visible");
             if (settings.youkuBlockAdSlot)
                 H.hooked("youku_home_top_ad", "first home carousel card collapse");
             else H.skipped("youku_home_top_ad", "disabled in settings");
@@ -244,6 +253,77 @@ final class YoukuRules {
                 && "我的".equals(tabLabel(group.getChildAt(4)))) return group;
         for (int i = group.getChildCount() - 1; i >= 0; i--) {
             ViewGroup found = findBottomBar(group.getChildAt(i), visited);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /**
+     * Hides the top channel bar entries the user turned off, at the View layer.
+     *
+     * <p>Why the View layer and not the data layer: the data-layer anchors
+     * ({@code p}/{@code e} on the channel filter) each carry their OWN guards inside the original
+     * body - teen mode and {@code channel.isSelection} - so returning a blanket {@code true}
+     * would replace those bodies and could drop the currently selected channel. Targeting single
+     * channels there instead needs a name→nodeKey map, which means reflection and allocation on
+     * the call path. Hiding the tab view has neither problem: the app keeps its full data model
+     * and all its selection logic, and the entry simply is not drawn.
+     *
+     * <p>Safety: {@code Config.CHANNEL_CATALOG} names no "首页", and the bottom bar is matched by
+     * {@link #findBottomBar} before this runs, so the home tab can never be a candidate here.
+     * Bails out unless at least two known channel names are found in one row, so a random list
+     * that happens to contain one word is left alone.
+     */
+    private static void filterTopChannels(Activity activity, Config.Settings settings) {
+        try {
+            String[] hidden = settings.hiddenChannelNames;
+            if (hidden == null || hidden.length == 0) return;
+            int rootId = activity.getResources().getIdentifier("kf_root_page", "id", activity.getPackageName());
+            View root = rootId == 0 ? null : activity.findViewById(rootId);
+            // The channel row is not guaranteed to sit under kf_root_page, and the "at least two
+            // known channel names in one row" test is already a strong guard, so search the whole
+            // decor rather than risk anchoring on a container that may move between builds.
+            if (root == null) root = activity.getWindow().getDecorView();
+            if (root == null) return;
+            ViewGroup bar = findChannelRow(root, new int[]{0});
+            if (bar == null || lastChannelBar.get() == bar) return;
+            int removed = 0;
+            StringBuilder hiddenNames = new StringBuilder();
+            for (int i = 0; i < bar.getChildCount(); i++) {
+                View child = bar.getChildAt(i);
+                String label = tabLabel(child);
+                for (String name : hidden) {
+                    if (!name.equals(label)) continue;
+                    child.setVisibility(View.GONE);
+                    if (hiddenNames.length() != 0) hiddenNames.append(',');
+                    hiddenNames.append(label);
+                    removed++;
+                    break;
+                }
+            }
+            lastChannelBar = new WeakReference<ViewGroup>(bar);
+            if (removed > 0)
+                H.hit("youku_channel_filter", "hidden=" + removed + " from channel row [" + hiddenNames + "]",
+                        CHANNEL_FILTER_HIT);
+        } catch (Throwable error) {
+            H.warn("event=youku_channel_filter_runtime_error " + H.describe(error));
+        }
+    }
+
+    /** A row counts as the channel bar only when at least two catalog names appear in it. */
+    private static ViewGroup findChannelRow(View view, int[] visited) {
+        if (!(view instanceof ViewGroup) || ++visited[0] > 250) return null;
+        ViewGroup group = (ViewGroup) view;
+        if (group.getChildCount() >= 2) {
+            int known = 0;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                String label = tabLabel(group.getChildAt(i));
+                for (String[] entry : Config.CHANNEL_CATALOG) if (entry[1].equals(label)) { known++; break; }
+            }
+            if (known >= 2) return group;
+        }
+        for (int i = group.getChildCount() - 1; i >= 0; i--) {
+            ViewGroup found = findChannelRow(group.getChildAt(i), visited);
             if (found != null) return found;
         }
         return null;
@@ -773,42 +853,6 @@ final class YoukuRules {
     }
 
     // ------------------------------------------------------------------ T-1
-
-    /**
-     * T-1 ({@code j.b1.j7.b.p(Channel)Z} / {@code e(Channel)Z}, the app-native per-channel
-     * display filter) is deliberately NOT armed and is reported as a miss, because arming it
-     * safely is not possible from this module:
-     *
-     * <ul>
-     *   <li>{@code p}/{@code e} carry their OWN guards inside the original body - teen mode
-     *       ({@code j.b1.g3.a.z.b.t()}) and {@code channel.isSelection}. Returning a blanket
-     *       {@code true} replaces the whole method and loses them, so the currently selected or
-     *       teen-mode channel can be dropped.</li>
-     *   <li>Returning true only for chosen channels needs a name -&gt; {@code nodeKey} mapping,
-     *       and building one requires reading {@code Channel} fields inside the intercept, which
-     *       would mean reflection and allocation on the call path.</li>
-     * </ul>
-     *
-     * <p>The anchors are still probed, so the miss line states whether the report's evidence is
-     * still present in this build or has drifted.
-     */
-    private static void reportChannelFilterSkipped(ClassLoader loader) {
-        final String rule = "youku_channel_filter";
-        String evidence;
-        try {
-            Class<?> filters = R.load(loader, Config.YK_CHANNEL_FILTER);
-            Class<?> channel = R.load(loader, Config.YK_CHANNEL);
-            Method keep = R.findByShape(filters, new String[]{"p"}, boolean.class, channel);
-            Method show = R.findByShape(filters, new String[]{"e"}, boolean.class, channel);
-            evidence = "anchors still present (p=" + (keep != null) + ", e=" + (show != null) + ")";
-        } catch (Throwable error) {
-            evidence = "anchor probe failed (" + H.describe(error) + ")";
-        }
-        H.skipped(rule, "not armed by design: " + evidence + ", but p/e hold the teen-mode and"
-                + " isSelection guards inside their own bodies and 11.2.1 has no name->nodeKey"
-                + " map to target single channels, so any blanket return would drop the selected"
-                + " tab; skipped instead of guessing (see scratch-recon/youku-gates.md 5.1)");
-    }
 
     /**
      * Suppresses the CSJ (穿山甲) DSP ad-network switch through Youku's OWN config branch.
