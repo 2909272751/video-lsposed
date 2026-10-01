@@ -154,61 +154,18 @@ final class YoukuRules {
             return;
         }
         try {
-            // Anchor note (2026-10-01 20:2x): this used to hook
-            // Instrumentation.callActivityOnResume, and across the whole session history that
-            // intercept body ran in only 2 of the last 7 Youku processes while every one of them
-            // still printed status=hooked and hooked=11 miss=0. Instrumentation is a platform
-            // singleton that an app may replace in ActivityThread before the module installs, so
-            // the hook can be installed and then never see a call - and being timing dependent
-            // that looks exactly like "no ads to intercept". Activity.performCreate is called by
-            // the framework itself on every launch and cannot be swapped out from under us.
-            Class<?> activityClass = Class.forName("android.app.Activity", false, loader);
-            Method performCreate = R.find(activityClass, "performCreate", void.class, android.os.Bundle.class);
-            if (performCreate == null) {
-                H.miss("youku_tab_filter", "Activity.performCreate(Bundle) unavailable; UI rules cannot run");
-                return;
-            }
-            module.hook(performCreate).setId("youku_bottom_tabs_view").intercept(new XposedInterface.Hooker() {
-                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                    // Unconditional once-per-process breadcrumb, first line of the body. It exists to
-                    // separate "the intercept never runs" from "it runs and matches nothing" - the two
-                    // are indistinguishable from the outside and have been confused for three rounds.
-                    // Logs BEFORE proceed() so it also shows up if proceed() throws.
-                    if (RESUME_ENTERED.compareAndSet(false, true)) {
-                        H.warn("event=youku_resume_entered anchor=Activity.performCreate");
-                    }
-                    Object result = chain.proceed();
-                    final Activity activity = (Activity) chain.getArg(0);
-                    if (activity != null) {
-                        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
-                        handler.postDelayed(new Runnable() {
-                            @Override public void run() {
-                                if (!RESUME_PASSED.compareAndSet(false, true)) {
-                                    H.warn("event=youku_resume_task_skipped filtering=" + filtering
-                                            + " blockAdSlot=" + settings.youkuBlockAdSlot
-                                            + " hiddenChannels=" + settings.hiddenChannelNames.length);
-                                    return;
-                                }
-                                if (filtering) filterBottomBar(activity, settings);
-                                if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
-                                filterTopChannels(activity, settings);
-                                if (settings.debugLog) dumpViewTreeOnce(activity);
-                            }
-                        }, 500);
-                        if (settings.youkuBlockAdSlot) {
-                            handler.postDelayed(new Runnable() {
-                                @Override public void run() { hideHomeTopAd(activity); }
-                            }, 3000);
-                            handler.postDelayed(new Runnable() {
-                                @Override public void run() { hideHomeTopAd(activity); }
-                            }, 6000);
-                        }
-                    }
-                    return result;
-                }
-            });
-            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; runs after Activity.performCreate");
-            if (settings.debugLog) installResumeProbes(module, loader);
+            // Anchor note (2026-10-01 20:3x-20:4x). This hook has lived on two anchors and neither
+            // one ever fired. Runtime enumeration (event=resume_probe) showed seven Activity
+            // lifecycle methods installing cleanly and being called zero times, while hooks on the
+            // app's own classes fired in the same session - and Instrumentation hooks fire, because
+            // this module's own context probe rides on Instrumentation.callActivityOnCreate. So the
+            // split is specific: on this device, hooks on android.app.Activity install silently and
+            // do nothing, while hooks on Instrumentation and on app classes work.
+            //
+            // Therefore there is no framework-class hook here any more. The UI pass is driven from
+            // MainHook through ActivityLifecycleCallbacks, which is a registration API and needs no
+            // hook at all. The reporting below stays so the rules remain observable.
+            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; driven by ActivityLifecycleCallbacks");
             else H.skipped("youku_tab_filter", "all tabs visible");
             if (settings.hiddenChannelNames.length != 0)
                 H.hooked("youku_channel_filter", "top channel row, View layer (data model untouched): hidden="
@@ -221,6 +178,58 @@ final class YoukuRules {
             H.miss("youku_tab_filter", H.describe(error));
             if (settings.youkuBlockAdSlot) H.miss("youku_home_top_ad", H.describe(error));
         }
+    }
+
+    /**
+     * Entry point for the UI rules, driven by {@code ActivityLifecycleCallbacks} rather than by a
+     * framework-class hook - see the anchor note in {@code install}. Called on every Activity resume
+     * and schedules a small fixed set of delayed passes, never a poll: views that arrive late are
+     * covered by 0.5 s / 3 s / 6 s, which is what the home carousel and the channel row need.
+     */
+    static void onActivityResumed(Activity activity, Config.Settings settings) {
+        if (activity == null || settings == null) return;
+        boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
+                || !settings.youkuShowGoodMovies;
+        if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) return;
+        if (UI_PASS_LOGGED.compareAndSet(false, true)) {
+            H.warn("event=youku_ui_pass_entered anchor=ActivityLifecycleCallbacks activity="
+                    + activity.getClass().getName() + " super=" + describeHierarchy(activity.getClass())
+                    + " filtering=" + filtering + " blockAdSlot=" + settings.youkuBlockAdSlot
+                    + " hiddenChannels=" + settings.hiddenChannelNames.length);
+        }
+        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (filtering) filterBottomBar(activity, settings);
+                if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
+                filterTopChannels(activity, settings);
+                if (settings.debugLog) dumpViewTreeOnce(activity);
+            }
+        }, 500);
+        if (settings.youkuBlockAdSlot) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() { hideHomeTopAd(activity); }
+            }, 3000);
+            handler.postDelayed(new Runnable() {
+                @Override public void run() { hideHomeTopAd(activity); }
+            }, 6000);
+        }
+    }
+
+    /** One-time breadcrumb only; the passes themselves run on every resume. */
+    private static final java.util.concurrent.atomic.AtomicBoolean UI_PASS_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Superclass chain of an Activity, for anchoring on an app class instead of a framework one. */
+    static String describeHierarchy(Class<?> type) {
+        StringBuilder chain = new StringBuilder();
+        Class<?> current = type;
+        while (current != null && chain.length() < 300) {
+            if (chain.length() > 0) chain.append(" < ");
+            chain.append(current.getName());
+            current = current.getSuperclass();
+        }
+        return chain.toString();
     }
 
     private static void hideHomeTopAd(Activity activity) {

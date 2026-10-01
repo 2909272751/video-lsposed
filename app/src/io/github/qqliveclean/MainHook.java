@@ -154,6 +154,60 @@ public final class MainHook extends XposedModule {
         }
     }
 
+    /**
+     * Drives Youku's UI rules through ActivityLifecycleCallbacks.
+     *
+     * <p>This replaces a hook on {@code android.app.Activity}. Runtime enumeration showed that hooks
+     * on that framework class install without error and are then never called, while hooks on
+     * {@code Instrumentation} and on app classes do fire. Registering the callbacks needs no hook at
+     * all, so it sidesteps the whole failure mode instead of looking for another anchor inside it.
+     * Registration is once per process and any failure is reported, never swallowed.
+     */
+    private void registerUiLifecycle(Context context, final Config.Settings settings) {
+        if (context == null || UI_LIFECYCLE_REGISTERED.get()) return;
+        android.app.Application application = context instanceof android.app.Application
+                ? (android.app.Application) context
+                : context instanceof android.app.Activity ? ((android.app.Activity) context).getApplication() : null;
+        if (application == null) {
+            H.warn("event=ui_lifecycle_unavailable reason=no_Application context=" + context.getClass().getName());
+            return;
+        }
+        try {
+            application.registerActivityLifecycleCallbacks(new android.app.Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityCreated(android.app.Activity a, android.os.Bundle b) {
+                    if (CREATED_SEEN.compareAndSet(false, true)) {
+                        H.warn("event=ui_lifecycle_created activity=" + a.getClass().getName()
+                                + " sameApplication=" + (a.getApplication() == application)
+                                + " super=" + YoukuRules.describeHierarchy(a.getClass()));
+                    }
+                }
+                @Override public void onActivityStarted(android.app.Activity a) { }
+                @Override public void onActivityResumed(final android.app.Activity a) {
+                    try {
+                        YoukuRules.onActivityResumed(a, settings);
+                    } catch (Throwable error) {
+                        H.warn("event=ui_lifecycle_error " + H.describe(error));
+                    }
+                }
+                @Override public void onActivityPaused(android.app.Activity a) { }
+                @Override public void onActivityStopped(android.app.Activity a) { }
+                @Override public void onActivitySaveInstanceState(android.app.Activity a, android.os.Bundle b) { }
+                @Override public void onActivityDestroyed(android.app.Activity a) { }
+            });
+            UI_LIFECYCLE_REGISTERED.set(true);
+            H.info("rule=youku_ui_lifecycle status=hooked source=ActivityLifecycleCallbacks (no framework hook)");
+        } catch (Throwable error) {
+            H.warn("event=ui_lifecycle_error " + H.describe(error));
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean UI_LIFECYCLE_REGISTERED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** First Activity created after registration - the earliest possible callback, used as a probe. */
+    private static final java.util.concurrent.atomic.AtomicBoolean CREATED_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private void configure(Context context, ClassLoader loader, String target) {
         H.targetPackage = target;
         H.setReportContext(context);
@@ -214,6 +268,7 @@ public final class MainHook extends XposedModule {
                     + " youkuBottomBar=" + settings.youkuHideBottomBar
                     + " debugLog=" + settings.debugLog);
             YoukuRules.install(this, loader, settings);
+            registerUiLifecycle(context, settings);
             MinePromoRules.install(this, loader, Config.PACKAGE_YOUKU, settings.youkuHideMinePromos);
         // scaffolding removed after its findings were captured (see docs/GOAL-HANDOFF.md)
         }
