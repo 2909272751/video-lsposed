@@ -157,7 +157,16 @@ public final class MainHook extends XposedModule {
                     if (activity instanceof android.app.Activity && live != null) {
                         H.info("event=ui_driver source=callActivityOnCreate"
                                 + " activity=" + activity.getClass().getName());
-                        YoukuRules.onActivityResumed((android.app.Activity) activity, live, "callActivityOnCreate");
+                        try {
+                            YoukuRules.onActivityResumed((android.app.Activity) activity, live, "callActivityOnCreate");
+                        } catch (Throwable error) {
+                        // An Xposed intercept swallows throwables and leaves no trace, so a pass that
+                        // dies mid-way looks exactly like one that never ran. Catch it here, where
+                        // the framework eats it, instead of guessing what it was.
+                        H.info("event=ui_pass_threw source=callActivityOnCreate"
+                                + " activity=" + activity.getClass().getName()
+                                + " error=" + H.describe(error));
+                        }
                     }
                     return chain.proceed();
                 }
