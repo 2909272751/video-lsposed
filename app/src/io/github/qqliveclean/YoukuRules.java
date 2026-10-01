@@ -311,17 +311,38 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                 return fail("mActivities_not_a_map:" + activities.getClass().getName());
             java.util.Map<?, ?> map = (java.util.Map<?, ?>) activities;
             if (map.isEmpty()) return fail("map_empty");
-            int records = 0;
+            // mActivities holds several Activities at once - splash, detail page, real feed - and
+            // the first non-finishing one is not necessarily the one showing anything. The dump
+            // proved it: that Activity's decor view had a single node. So score every candidate by
+            // how much view tree it actually holds and take the richest window.
+            Activity best = null;
+            int bestNodes = -1;
+            StringBuilder census = new StringBuilder();
             for (Object record : map.values()) {
                 if (record == null) continue;
-                records++;
-                Object activity = readField(R.findField(record.getClass(), "activity"), record);
-                if (activity instanceof Activity && !((Activity) activity).isFinishing()) {
-                    LAST_REFLECT_REASON.set("ok records=" + records);
-                    return (Activity) activity;
+                Object value = readField(R.findField(record.getClass(), "activity"), record);
+                if (!(value instanceof Activity)) continue;
+                Activity candidate = (Activity) value;
+                if (candidate.isFinishing()) continue;
+                int nodes = decorNodes(candidate);
+                if (census.length() < 900) {
+                    // decorNodes already answers "has a window": it returns 0 without one, so
+                    // calling hasWindow() here would only duplicate what nodes==0 already says.
+                    census.append('|').append(candidate.getClass().getSimpleName())
+                            .append(":n").append(nodes);
+                }
+                if (nodes > bestNodes) {
+                    bestNodes = nodes;
+                    best = candidate;
                 }
             }
-            return fail("no_live_activity records=" + records);
+            if (best == null) return fail("no_live_activity");
+            LAST_REFLECT_REASON.set("ok nodes=" + bestNodes);
+            if (!CENSUS_LOGGED.compareAndSet(false, true)) {
+                H.info("event=ui_activity_census picked=" + best.getClass().getSimpleName()
+                        + " nodes=" + bestNodes + " all=" + census);
+            }
+            return best;
         } catch (Throwable error) {
             return fail("reflect_error:" + H.describe(error));
         }
@@ -335,6 +356,10 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
 
     private static final java.util.concurrent.atomic.AtomicReference<String> LAST_REFLECT_REASON =
             new java.util.concurrent.atomic.AtomicReference<String>("unset");
+
+    /** The census of live Activities is logged once per process; it never changes mid-session. */
+    private static final java.util.concurrent.atomic.AtomicBoolean CENSUS_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
 
 /** Reflection field read that never throws; a miss is a data point, not a failure. */
@@ -563,6 +588,18 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         }
         if (!TREE_DUMPED.compareAndSet(false, true)) return;
         dumpViewTree(activity, "youku_viewtree");
+    }
+
+    /** Counts the nodes in an Activity's decor view, 0 when there is no window or nothing in it. */
+    private static int decorNodes(Activity activity) {
+        try {
+            if (activity == null) return 0;
+            android.view.Window window = activity.getWindow();
+            if (window == null || window.getDecorView() == null) return 0;
+            return countNodes(window.getDecorView(), new int[1]);
+        } catch (Throwable error) {
+            return 0;
+        }
     }
 
     /** Counts nodes in the tree, stopping early past a few hundred so this stays cheap. */
