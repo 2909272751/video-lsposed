@@ -170,12 +170,25 @@ final class YoukuRules {
             }
             module.hook(performCreate).setId("youku_bottom_tabs_view").intercept(new XposedInterface.Hooker() {
                 @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                    // Unconditional once-per-process breadcrumb, first line of the body. It exists to
+                    // separate "the intercept never runs" from "it runs and matches nothing" - the two
+                    // are indistinguishable from the outside and have been confused for three rounds.
+                    // Logs BEFORE proceed() so it also shows up if proceed() throws.
+                    if (RESUME_ENTERED.compareAndSet(false, true)) {
+                        H.warn("event=youku_resume_entered anchor=Activity.performCreate");
+                    }
                     Object result = chain.proceed();
                     final Activity activity = (Activity) chain.getArg(0);
                     if (activity != null) {
                         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
                         handler.postDelayed(new Runnable() {
                             @Override public void run() {
+                                if (!RESUME_PASSED.compareAndSet(false, true)) {
+                                    H.warn("event=youku_resume_task_skipped filtering=" + filtering
+                                            + " blockAdSlot=" + settings.youkuBlockAdSlot
+                                            + " hiddenChannels=" + settings.hiddenChannelNames.length);
+                                    return;
+                                }
                                 if (filtering) filterBottomBar(activity, settings);
                                 if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
                                 filterTopChannels(activity, settings);
@@ -195,6 +208,7 @@ final class YoukuRules {
                 }
             });
             if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; runs after Activity.performCreate");
+            if (settings.debugLog) installResumeProbes(module, loader);
             else H.skipped("youku_tab_filter", "all tabs visible");
             if (settings.hiddenChannelNames.length != 0)
                 H.hooked("youku_channel_filter", "top channel row, View layer (data model untouched): hidden="
@@ -306,6 +320,65 @@ final class YoukuRules {
 
     private static final java.util.concurrent.atomic.AtomicBoolean TREE_DUMPED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Set the first time the resume intercept body runs at all, in either process. */
+    private static final java.util.concurrent.atomic.AtomicBoolean RESUME_ENTERED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Set the first time the delayed UI pass actually executes. */
+    private static final java.util.concurrent.atomic.AtomicBoolean RESUME_PASSED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Runtime enumeration of Activity lifecycle anchors.
+     *
+     * <p>Both anchors tried so far - Instrumentation.callActivityOnResume and
+     * Activity.performCreate - report hooked and then never execute their body, proven by the
+     * youku_resume_entered breadcrumb logging zero times. Rather than keep swapping anchors on
+     * theory, hook every plausible lifecycle method at once and let the device say which ones the
+     * app actually calls. Runs only when the debug setting is on, once per method per process.
+     */
+    private static void installResumeProbes(MainHook module, ClassLoader loader) {
+        String[][] candidates = {
+                {"performCreate", "android.os.Bundle"},
+                {"performStart", ""},
+                {"performResume", ""},
+                {"performPause", ""},
+                {"performStop", ""},
+                {"performDestroy", ""},
+                {"onCreate", "android.os.Bundle"},
+                {"onStart", ""},
+                {"onResume", ""},
+                {"onNewIntent", "android.content.Intent"},
+                {"onWindowFocusChanged", "boolean"},
+        };
+        for (String[] candidate : candidates) {
+            final String name = candidate[0];
+            try {
+                Class<?> activityClass = Class.forName("android.app.Activity", false, loader);
+                Class<?>[] params = candidate[1].isEmpty() ? new Class<?>[0]
+                        : new Class<?>[]{Class.forName(candidate[1], false, loader)};
+                Method method = R.find(activityClass, name, void.class, params);
+                if (method == null) { H.warn("event=resume_probe " + name + " absent"); continue; }
+                module.hook(method).setId("youku_resume_probe_" + name).intercept(new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                        if (RESUME_PROBE_SEEN.add(name)) {
+                            H.warn("event=resume_probe " + name + " fired on "
+                                    + (chain.getArg(0) == null ? "?"
+                                       : chain.getArg(0).getClass().getName()));
+                        }
+                        return chain.proceed();
+                    }
+                });
+            } catch (Throwable error) {
+                H.warn("event=resume_probe " + name + " hook_error " + H.describe(error));
+            }
+        }
+    }
+
+    /** One-shot per method name, so the first caller is named and the rest are silent. */
+    private static final java.util.Set<String> RESUME_PROBE_SEEN =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     private static void dumpViewTree(Activity activity, String tag) {
         try {
