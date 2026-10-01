@@ -216,7 +216,7 @@ final class YoukuRules {
                     // asking for j.d.m.g.b.onResume can legitimately return a method declared on a
                     // framework or AndroidX ancestor. Hooking one of those is the same silent no-op
                     // that cost several rounds, so the declaring class is reported rather than assumed.
-                    H.warn("event=ui_anchor_resolved asked=" + base + "." + lifecycle
+                    H.info("event=ui_anchor_resolved asked=" + base + "." + lifecycle
                             + " declaringClass=" + method.getDeclaringClass().getName()
                             + " static=" + java.lang.reflect.Modifier.isStatic(method.getModifiers())
                             + " abstract=" + java.lang.reflect.Modifier.isAbstract(method.getModifiers()));
@@ -226,7 +226,7 @@ final class YoukuRules {
                             Object result = chain.proceed();
                             if (chain.getArg(0) instanceof Activity && UI_ANCHOR_SEEN.add(base + "." + lifecycle)) {
                                 Activity activity = (Activity) chain.getArg(0);
-                                H.warn("event=ui_anchor_fired anchor=" + base + "." + lifecycle
+                                H.info("event=ui_anchor_fired anchor=" + base + "." + lifecycle
                                         + " activity=" + activity.getClass().getName()
                                         + " hierarchy=" + describeHierarchy(activity.getClass()));
                             }
@@ -273,11 +273,11 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     // "reflection failed" indistinguishable - and three rounds were spent guessing
                     // instead of reading. A driver that cannot fail loudly is not a driver.
                     if (activity == null) {
-                        H.warn("event=ui_tick tick=" + delay + "ms result=no_activity reason=" + LAST_REFLECT_REASON.get());
+                        H.info("event=ui_tick tick=" + delay + "ms result=no_activity reason=" + LAST_REFLECT_REASON.get());
                         return;
                     }
                     if (UI_PASS_LOGGED.compareAndSet(false, true)) {
-                        H.warn("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
+                        H.info("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
                                 + " activity=" + activity.getClass().getName()
                                 + " hierarchy=" + describeHierarchy(activity.getClass()));
                     }
@@ -373,7 +373,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                 || !settings.youkuShowGoodMovies;
         if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) return;
         if (UI_PASS_LOGGED.compareAndSet(false, true)) {
-            H.warn("event=youku_ui_pass_entered anchor=ActivityLifecycleCallbacks activity="
+            H.info("event=youku_ui_pass_entered anchor=ActivityLifecycleCallbacks activity="
                     + activity.getClass().getName() + " super=" + describeHierarchy(activity.getClass())
                     + " filtering=" + filtering + " blockAdSlot=" + settings.youkuBlockAdSlot
                     + " hiddenChannels=" + settings.hiddenChannelNames.length);

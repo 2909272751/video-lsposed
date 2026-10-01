@@ -36,6 +36,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainHook extends XposedModule {
     private static final AtomicBoolean CONFIGURED = new AtomicBoolean(false);
 
+    /** Settings resolved by configure(), so the callActivityOnCreate driver can reach them. */
+    private static final java.util.concurrent.atomic.AtomicReference<Config.Settings> ACTIVE_SETTINGS =
+            new java.util.concurrent.atomic.AtomicReference<Config.Settings>(null);
+
     private String processName;
     /** version name captured for the compatibility report header. */
     private static String currentVersionName = "unknown";
@@ -144,6 +148,16 @@ public final class MainHook extends XposedModule {
                     } catch (Throwable error) {
                         H.error("event=configure_failed", error);
                         H.diag("configure threw: " + H.describe(error));
+                    }
+                    // This hook demonstrably fires for every Activity creation, handing over a live
+                    // instance - the only trigger proven to reach the UI. The app base class anchor
+                    // installs but is never called and ActivityLifecycleCallbacks never dispatch, so
+                    // the feed rules run from here.
+                    Config.Settings live = ACTIVE_SETTINGS.get();
+                    if (activity instanceof android.app.Activity && live != null) {
+                        H.info("event=ui_driver source=callActivityOnCreate"
+                                + " activity=" + activity.getClass().getName());
+                        YoukuRules.onActivityResumed((android.app.Activity) activity, live, "callActivityOnCreate");
                     }
                     return chain.proceed();
                 }
@@ -310,8 +324,7 @@ public final class MainHook extends XposedModule {
         H.setReportContext(context);
         H.diag("configure enter context=" + (context == null ? "null" : context.getClass().getName()));
         if (!CONFIGURED.compareAndSet(false, true)) {
-            H.info("event=configure_skipped reason=already_configured");
-            H.diag("configure skipped (already configured)");
+            H.info("event=configure_skipped reason=already_configured");            H.diag("configure skipped (already configured)");
             return;
         }
         logTargetVersion(context, target);
@@ -364,6 +377,7 @@ public final class MainHook extends XposedModule {
                     + " youkuPauseAd=" + settings.youkuBlockPauseAd
                     + " youkuBottomBar=" + settings.youkuHideBottomBar
                     + " debugLog=" + settings.debugLog);
+            ACTIVE_SETTINGS.set(settings);
             YoukuRules.install(this, loader, settings);
             // The UI rules are driven from here: reflection over ActivityThread plus a bounded set of
             // delayed passes (1/2/4/8/12/16 s). No lifecycle event is hooked, because in Youku none of
