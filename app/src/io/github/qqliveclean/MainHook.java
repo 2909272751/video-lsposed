@@ -109,11 +109,6 @@ public final class MainHook extends XposedModule {
                     Object application = chain.getArg(0);
                     CONTEXT_SOURCE.set("app_probe");
                     try {
-                        dumpLiveActivities(application instanceof Context ? (Context) application : null);
-                    } catch (Throwable error) {
-                        H.warn("event=live_activities result=error " + H.describe(error));
-                    }
-                    try {
                         configure(application instanceof Context ? (Context) application : null,
                                 loader, target);
                     } catch (Throwable error) {
@@ -370,6 +365,11 @@ public final class MainHook extends XposedModule {
                     + " youkuBottomBar=" + settings.youkuHideBottomBar
                     + " debugLog=" + settings.debugLog);
             YoukuRules.install(this, loader, settings);
+            // The UI rules are driven from here: reflection over ActivityThread plus a bounded set of
+            // delayed passes (1/2/4/8/12/16 s). No lifecycle event is hooked, because in Youku none of
+            // them arrive - callActivityOnCreate never fires, the app base class hooks are called zero
+            // times and lifecycle callbacks are never dispatched.
+            YoukuRules.scheduleUiPasses(context, settings);
             registerUiLifecycle(context, settings);
             MinePromoRules.install(this, loader, Config.PACKAGE_YOUKU, settings.youkuHideMinePromos);
         // scaffolding removed after its findings were captured (see docs/GOAL-HANDOFF.md)

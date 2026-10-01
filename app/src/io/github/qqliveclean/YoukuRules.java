@@ -1,6 +1,7 @@
 package io.github.qqliveclean;
 
 import android.app.Activity;
+import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -247,10 +248,73 @@ final class YoukuRules {
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     /**
-     * Entry point for the UI rules. Called from the app-class anchor above and from the lifecycle
-     * callbacks as a fallback. Schedules a small fixed set of delayed passes, never a poll: views
-     * that arrive late are covered by 0.5 s / 3 s / 6 s, which is what the home carousel and the
-     * channel row need.
+ * Drives the UI rules without hooking any lifecycle event.
+ *
+ * <p>In Youku the whole activity-creation surface is unreachable: {@code callActivityOnCreate} never
+ * fires, {@code android.app.Activity} and the app base class hooks install and are called zero times,
+ * and registered lifecycle callbacks are never dispatched - while the Activity itself is
+ * demonstrably alive, reachable by reflection over {@code ActivityThread.mActivities}. So the module
+ * asks instead of waiting: it reflects out the live Activity and runs the pass.
+ *
+ * <p>Bounded by design. Six fixed re-runs at 1/2/4/8/12/16 s cover views that arrive late; there is
+ * no polling loop, no resident timer and no per-frame work, which keeps the module cheap and off the
+ * app's hot paths.
+ */
+static void scheduleUiPasses(final Context context, final Config.Settings settings) {
+        if (context == null || settings == null) return;
+        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        final int[] delays = {1000, 2000, 4000, 8000, 12000, 16000};
+        for (final int delay : delays) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    Activity activity = findLiveActivity(context);
+                    if (activity == null) return;
+                    if (UI_PASS_LOGGED.compareAndSet(false, true)) {
+                        H.warn("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
+                                + " activity=" + activity.getClass().getName()
+                                + " hierarchy=" + describeHierarchy(activity.getClass()));
+                    }
+                    onActivityResumed(activity, settings);
+                }
+            }, delay);
+        }
+}
+
+/** Reads the live Activity out of ActivityThread.mActivities. Returns null when none is up yet. */
+private static Activity findLiveActivity(Context context) {
+        try {
+            Class<?> threadClass = Class.forName("android.app.ActivityThread", false,
+                    context.getClass().getClassLoader());
+            Method current = R.find(threadClass, "currentActivityThread", threadClass, new Class<?>[0]);
+            Object thread = current == null ? null : current.invoke(null);
+            java.lang.reflect.Field activitiesField = R.findField(threadClass, "mActivities");
+            Object activities = activitiesField == null ? null : readField(activitiesField, thread);
+            if (!(activities instanceof java.util.Map)) return null;
+            for (Object record : ((java.util.Map<?, ?>) activities).values()) {
+                Object activity = readField(R.findField(record.getClass(), "activity"), record);
+                if (activity instanceof Activity && !((Activity) activity).isFinishing()) return (Activity) activity;
+            }
+            return null;
+        } catch (Throwable error) {
+            return null;
+        }
+}
+
+/** Reflection field read that never throws; a miss is a data point, not a failure. */
+private static Object readField(java.lang.reflect.Field field, Object owner) {
+        if (field == null || owner == null) return null;
+        try {
+            return field.get(owner);
+        } catch (Throwable error) {
+            return null;
+        }
+}
+
+    /**
+     * Entry point for the UI rules. Called from the reflection driver above, and from the app base
+     * class anchor and the lifecycle callbacks when those happen to fire. Schedules a small fixed set
+     * of delayed passes, never a poll: views that arrive late are covered by 0.5 s / 3 s / 6 s, which
+     * is what the home carousel and the channel row need.
      */
     static void onActivityResumed(Activity activity, Config.Settings settings) {
         if (activity == null || settings == null) return;
