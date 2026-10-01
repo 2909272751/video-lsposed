@@ -168,6 +168,7 @@ final class YoukuRules {
                                 if (filtering) filterBottomBar(activity, settings);
                                 if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
                                 filterTopChannels(activity, settings);
+                                if (settings.debugLog) dumpViewTree(activity, "youku_viewtree");
                             }
                         }, 500);
                         if (settings.youkuBlockAdSlot) {
@@ -274,6 +275,69 @@ final class YoukuRules {
      * Bails out unless at least two known channel names are found in one row, so a random list
      * that happens to contain one word is left alone.
      */
+    /**
+     * One-shot dump of the Activity's view tree, for locating UI containers by observation instead
+     * of by guessing. Debug setting only, depth-limited, and it logs the id NAME (not the numeric
+     * id) so a renamed resource still identifies itself. Enabled by 记录详细日志.
+     */
+    private static void dumpViewTree(Activity activity, String tag) {
+        try {
+            View root = activity.getWindow().getDecorView();
+            if (root == null) return;
+            android.content.res.Resources res = activity.getResources();
+            StringBuilder out = new StringBuilder(2048);
+            dumpNode(root, res, 0, 24, out);
+            H.warn("event=" + tag + " tree=" + out);
+        } catch (Throwable error) {
+            H.warn("event=" + tag + "_error " + H.describe(error));
+        }
+    }
+
+    private static void dumpNode(View view, android.content.res.Resources res, int depth, int maxDepth,
+            StringBuilder out) {
+        if (view == null || depth > maxDepth) return;
+        if (out.length() > 6000) { out.append("…truncated"); return; }
+        String text = view instanceof TextView ? String.valueOf(((TextView) view).getText()) : "";
+        int id = view.getId();
+        String name = id == View.NO_ID ? "" : safeResName(res, id);
+        // No newlines: the log writer emits one record per line and would drop everything after
+        // the first break. A flat separator keeps the whole tree inside a single record.
+        out.append('|').append(repeat('.', depth * 2)).append(view.getClass().getSimpleName())
+                .append('#').append(view.getId()).append(name.isEmpty() ? "" : "(" + name + ")")
+                .append(text.isEmpty() ? "" : " \"" + text + "\"")
+                .append(" vis=").append(view.getVisibility())
+                .append(" kids=").append(view instanceof ViewGroup ? ((ViewGroup) view).getChildCount() : 0)
+                .append(" box=").append(box(view));
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) dumpNode(group.getChildAt(i), res, depth + 1, maxDepth, out);
+        }
+    }
+
+    private static String box(View view) {
+        try {
+            int[] p = new int[2];
+            view.getLocationOnScreen(p);
+            return p[0] + "," + p[1] + "," + (p[0] + view.getWidth()) + "," + (p[1] + view.getHeight());
+        } catch (Throwable error) {
+            return "n/a";
+        }
+    }
+
+    private static String safeResName(android.content.res.Resources res, int id) {
+        try {
+            return res.getResourceEntryName(id);
+        } catch (Throwable error) {
+            return "?";
+        }
+    }
+
+    private static String repeat(char c, int n) {
+        StringBuilder b = new StringBuilder(n);
+        for (int i = 0; i < n; i++) b.append(c);
+        return b.toString();
+    }
+
     private static void filterTopChannels(Activity activity, Config.Settings settings) {
         try {
             String[] hidden = settings.hiddenChannelNames;
