@@ -654,6 +654,18 @@ final class YoukuRules {
             {"com.youku.xadsdk.ui.component.AdVideoView", "onStart", "0"},
             {"com.youku.xadsdk.ui.component.AdVideoView", "onComplete", "0"},
             {"com.youku.xadsdk.ui.component.AdVideoView", "setOpVideoInfo", "1"},
+            // Youku ships a SECOND, identical AdVideoView of its own, in a different
+            // dex (player2.plugin.interact.view is classes2.dex, the SDK one is
+            // classes5.dex). Which one renders a pre-roll is not knowable offline,
+            // and covering only one of them would let "no hits" mean "watched the
+            // wrong class" rather than "no ad was served". Same method names, so the
+            // two copies are told apart by the fully qualified name.
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "setAdType", "1"},
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "setVideoSource", "1"},
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "onPrepared", "0"},
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "onStart", "0"},
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "onComplete", "0"},
+            {"com.youku.player2.plugin.interact.view.AdVideoView", "setOpVideoInfo", "1"},
         };
         int armed = 0;
         StringBuilder seen = new StringBuilder();
@@ -673,7 +685,7 @@ final class YoukuRules {
                 if (!method.getName().equals(probe[1])) continue;
                 if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
                 if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
-                final String where = owner.getSimpleName() + "." + method.getName();
+                final String where = owner.getName() + "#" + method.getName();
                 try {
                     module.hook(method).setId("youku_preroll_probe_" + where).intercept(
                             new XposedInterface.Hooker() {
