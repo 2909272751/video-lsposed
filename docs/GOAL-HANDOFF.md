@@ -1521,3 +1521,45 @@ feature=youku_home_top_ad result=matched
    写 youku_video_preroll 规则。
 2. 修 youku_home_top_ad：esult=matched 之后为何没隐藏（八成是找到的不是真正那张卡）。
 3. **回归基线**：以后每轮画面判断都必须附同 PID hit= 对照，本轮已写死为纪律。
+## 三十七、第 41 轮（用户说「继续」后）：详情页 dump 仍拿不到
+
+目标：抓 DetailActivity 播放 110 秒倒计时广告时的视图树。
+
+### 本轮改动（0.3.34）
+
+1. **dump 额度改为按 Activity 类分别计数**（TREE_DUMPS，每类最多 2 次），
+   不再让首页把全局一次性额度花光。
+2. dumpViewTreeOnce 改用 decorNodes 统一计数（消除第 38 轮「普查 171 vs dump 报 <30」的矛盾写法）。
+3. onActivityResumed 里给**非首页 Activity** 单独加 dump 排程（1500 / 4000 / 8000 / 12000 / 16000 ms）。
+
+### 结果：仍失败
+
+```
+focus = com.youku.phone/com.youku.ui.activity.DetailActivity   ← 详情页确实在前台
+分段行数 = 0
+youku_viewtree_error / ui_pass_run_threw = 0
+viewtree_wait 全部是 activity=com.youku.phone.ActivityWelcome nodes=1
+ui_pass_entry: RootPageActivity x5 (reflection) + DetailActivity x1 (callActivityOnCreate)
+DetailActivity 的 offset: 只有 3000ms 与 6000ms，没有 500ms
+```
+
+### 这是一个**自相矛盾**的观测，尚未定位
+
+1500ms 的 dump 与 500ms 的 pass 排在同一段代码里、**在 3000/6000 之前**，
+但详情页**只看到 3000/6000**。若新加的代码抛异常，后面的 3000/6000 也不会执行。
+
+可能方向（下一轮从这里查，不要重头再来）：
+1. settings.debugLog 在 callActivityOnCreate 这条路径上拿到的是**旧 Settings 实例**；
+2. onActivityResumed 在 callActivityOnCreate 路径上**提前 return**，
+   实际执行的是另一个方法副本（handler 行在文件中出现 2 次，见第 37 轮编辑时的提示）；
+3. 日志单行截断把 500ms 那行切掉了，导致「没看到」其实是「没记录」。
+
+> 第 3 条最可疑：本项目已经被日志单行上限坑过一次（视图树 2910 字符被截断）。
+
+### 第 42 轮的作业
+
+1. **先解决上面第 3 条**：ui_pass_run 那一行缩短到只打 Activity 短类名，
+   确保不会被截断；再复测，确认 500ms/1500ms 到底是没跑还是没记下来。
+2. 若确认「没跑」：在 onActivityResumed 开头无条件打一行
+   event=detail_reached activity=… debugLog=…，把早退与否直接暴露出来。
+3. 拿到详情页视图树后，写 youku_video_preroll 规则，目标就是那条 110 秒倒计时。
