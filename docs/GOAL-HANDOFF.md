@@ -1042,3 +1042,33 @@ try {
    改用 dumpsys window | grep -m1 mCurrentFocus（输出小、稳定）。
 2. 设备卡在 mCurrentFocus=Window{… NotificationShade}，解锁点击全打在通知栏上。
    **解锁流程必须先 cmd statusbar collapse。**
+## 二十六、第 28 轮：异常假设被证伪（0.3.26）
+
+按第 27 轮作业把调用包进 try/catch，上报 event=ui_pass_threw。
+三个会话全部通过守门（已解锁 / mCurrentFocus 命中优酷）。
+
+```
+ui_driver    = 8
+ui_pass_threw = 0      ← 没有任何异常
+ui_pass_entry = 0      ← 但入口日志一条都没有
+```
+
+### 结论：第 27 轮的异常假设**被推翻**
+
+onActivityResumed 被调用 8 次，参数在驱动处已验证非空，
+**既不抛异常、也打到不了自己的第一条日志**。
+「内部抛异常被 Xposed 吞掉」不成立——catch 一次都没进去。
+
+这排除了一个假设，是本轮的真实收获：
+**剩下的可能性只有「方法体根本没执行到日志那一行」或「YoukuRules 侧的日志没落盘」。**
+
+### 第 29 轮的作业
+
+1. 在 onActivityResumed 的**第一行**（CURRENT_SOURCE.set 之前）加一条 H.info。
+   第一行都不打印，就说明**方法体压根没执行**——那问题回到「谁在调用它」。
+2. 同时在 MainHook 驱动处、YoukuRules.onActivityResumed(...) 调用**返回之后**再打一条，
+   用「进入前 / 返回后」两条日志夹住一次调用，直接区分
+   **「没进去」/「进去了但内部静默」/「进去了且正常返回」**三种情况。
+3. 若确认第一行也不打印：下一步查 YoukuRules 这个类是否被正确加载——
+   同一进程内 MainHook 的 H.info 能落盘（ui_driver 就是证据），
+   YoukuRules 的却不能，**这本身就是一个待解释的差异**。
