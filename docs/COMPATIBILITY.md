@@ -3,6 +3,19 @@
 验证环境：Android 16（API 36.1）、LSPosed 2.2.0 (7854)、Zygisk Next 1.5.0 (843)、APatch、小米 MI 9。
 每个版本都是真机安装对应 APK → 冷启动 → 读模块落盘的逐项兼容报告，下表数字即报告原始计数。
 
+## 结论速览（0.3.12 / 2026-10-01 真机实测）
+
+只列**有 `hit=` 行**的项。没有命中行的规则不写进承诺。
+
+| App | 版本 | 已验证拦截（均有命中行） | 未验证 / 不承诺 |
+|---|---|---|---|
+| 腾讯视频 | 9.04.55.32321 | 广告请求闸 `ad_request_gate`、个人中心广告卡 `mine_ad_card`、信息流广告位 `feed_ad_cell`、自动播放、推送 | — |
+| 爱奇艺 | 17.9.5 | **开屏广告** `iqiyi_splash`、首页顶部广告 `iqiyi_home_top_ad` | 播放页前贴（原生层，需 VIP 与会员内容才复现） |
+| 优酷 | 11.2.15 | 暂停广告 `youku_pause_ad`、首页轮播卡 `youku_home_top_ad`、底部标签隐藏 `youku_tab_filter`、开屏热开关 `youku_splash_hot_switch` | **视频内容侧前贴/中插**：当前账号（未登录、非会员）下优酷完全不下发广告物料，无法复现，故不承诺。`youku_mine_carousel` / `youku_mine_vip_promo` 未登录时无法进入其所在页面 |
+
+复现某一行的方法见各 App 小节；**判断一条规则是否真的生效，只认日志里的 `hit=` 行**，
+`hooked` 只表示方法解析成功——本项目有多条「hooked 但从未被调用」的记录，其中两条已在 2026-10-01 撤下。
+
 ## 逐版本实测
 
 ### 腾讯视频 `com.tencent.qqlive`
@@ -28,6 +41,16 @@
 | 报告 | `install_summary` 未打印该进程（启动期日志被后续进程覆盖），逐项 `installs` 显示 `feed_ad_cell=ok` |
 | 命中 | `hit=ad_request_gate`（outgoing ad request suppressed）、`hit=mine_ad_card` |
 | `feed_ad_cell` 三个闸门 | 用 `tools/dexrefs.py` 在 9.04.55 的 dex 上核对，三处签名全部健在：`ona.ad.universal.g.b(AdFeedInfo)Z`、`ona.ad.b.y(AdFeedInfo)Z`、`ona.ad.feed.a.v(AdFeedInfo)Z` |
+
+**`feed_ad_cell` 于 18:4x 补齐命中行**：`hit=feed_ad_cell ad feed rejected -> no ad cell (feed/focus/card/bottom)`。
+此前长期零命中的原因与锚点无关——**只停在首页没滚动 feed**，feed 不请求新 cell，
+就没有广告格子经过那三个闸门。复现方法：**首页 feed 连滚 5 页 + 切频道再滚 3 页**。
+三条规则（`ad_request_gate` / `mine_ad_card` / `feed_ad_cell`）在同一次会话里各留下一条命中行。
+
+**回归（2026-10-01 18:5x，撤下两个优酷闸门之后）**：`hit=mine_ad_card` 在新进程 16402 复现，
+确认撤下改动没有影响腾讯。注意腾讯的 `install_summary` 有时不打印该进程
+（一次回归跑里只写出 5 行模块日志就停在 `context_probe_activity`），
+**日志行数不足时不能据此判断规则状态**，要重跑——那不是回归失败，是安装未完成。
 | 结论 | 结构完好、已挂接，但未登录会话里首页信息流与播放页下方推荐流都没有渲染出广告格子，因此**本轮拿不到 `hit=feed_ad_cell`**。该规则的命中证据仍停留在 9.04.51.32299；不要把「已挂接」当成「已验证」。 |
 
 ### 优酷 `com.youku.phone`
