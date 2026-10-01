@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 腾讯视频 | 9.04.55.32321 | 广告请求闸 `ad_request_gate`、个人中心广告卡 `mine_ad_card`、信息流广告位 `feed_ad_cell`、自动播放、推送 | — |
 | 爱奇艺 | 17.9.5 | **开屏广告** `iqiyi_splash`、首页顶部广告 `iqiyi_home_top_ad` | 播放页前贴（原生层，需 VIP 与会员内容才复现） |
-| 优酷 | 11.2.15 | 暂停广告 `youku_pause_ad`、首页轮播卡 `youku_home_top_ad`、底部标签隐藏 `youku_tab_filter`、开屏热开关 `youku_splash_hot_switch` | **视频内容侧前贴/中插**：当前账号（未登录、非会员）下优酷完全不下发广告物料，无法复现，故不承诺。`youku_mine_carousel` / `youku_mine_vip_promo` 未登录时无法进入其所在页面 |
+| 优酷 | 11.2.15 | 暂停广告 `youku_pause_ad`、首页轮播卡 `youku_home_top_ad`、**顶部频道隐藏 `youku_channel_filter`**、底部标签隐藏 `youku_tab_filter`、开屏热开关 `youku_splash_hot_switch`、穿山甲 DSP 关闭 `youku_csj_dsp_off` | **视频内容侧前贴/中插**：当前账号（未登录、非会员）下优酷完全不下发广告物料，无法复现，故不承诺。`youku_mine_carousel` / `youku_mine_vip_promo` 未登录时无法进入其所在页面 |
 
 复现某一行的方法见各 App 小节；**判断一条规则是否真的生效，只认日志里的 `hit=` 行**，
 `hooked` 只表示方法解析成功——本项目有多条「hooked 但从未被调用」的记录，其中两条已在 2026-10-01 撤下。
@@ -794,3 +794,32 @@ Activity-resume 路径。日志统计结果：
 
 > 在此之前，`youku_tab_filter` 与 `youku_home_top_ad` 的历史命中行
 > **不能代表当前版本仍然有效**。
+### 撤回：Activity-resume 路径并没有死（第 13 轮）
+
+第 12 轮曾断定「resume 路径间歇性失效」，依据是 `youku_home_top_ad` 全程只命中一次、
+最近 5 个进程命中为 0。**该结论错误，撤回。**
+
+真实原因有二：
+
+1. **grep 模式漏了规则。** 当时只统计了 `hit=youku_(tab_filter|home_top_ad)`，
+   而 `hit=youku_channel_filter` 恰好不在其中。补上之后真相是：
+
+```
+rule=youku_channel_filter status=hooked … hidden=1 of 5
+event=install_summary hooked=11 miss=0
+hit=youku_channel_filter hidden=1 from channel row [电影]
+hit=youku_tab_filter     hidden=3 from five-button bar
+```
+
+   `hidden=1 … [电影]` 正是设置里关掉的那一个频道——**规则准确、可复现、判定通过**。
+
+2. **那批「零命中」会话根本没走到首页 feed**：三个候选坐标全部点空、
+   `playback_updates=0`、连视图树都没有导出。是 App 处于不可用状态，不是钩子没被调用。
+
+> **教训：统计命中时，模式必须覆盖全部相关规则。**
+> 少写一个规则名，就会把「有命中」读成「零命中」，
+> 然后据此去修一个根本没坏的锚点——第 12 轮正是这么干的。
+
+锚点本身仍从 `Instrumentation.callActivityOnResume` 换成了 `Activity.performCreate`：
+框架自己调用、App 无法替换，方向是对的，但**没有证据表明旧锚点曾失效**，
+不把这次更换算作修复。跨 4 个会话验证均正常（`hooked=11 miss=0`，无 miss）。

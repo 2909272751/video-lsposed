@@ -154,10 +154,21 @@ final class YoukuRules {
             return;
         }
         try {
-            Class<?> instrumentation = Class.forName("android.app.Instrumentation", false, loader);
-            Method resume = R.find(instrumentation, "callActivityOnResume", void.class, Activity.class);
-            if (resume == null) { H.miss("youku_tab_filter", "Activity resume unavailable"); return; }
-            module.hook(resume).setId("youku_bottom_tabs_view").intercept(new XposedInterface.Hooker() {
+            // Anchor note (2026-10-01 20:2x): this used to hook
+            // Instrumentation.callActivityOnResume, and across the whole session history that
+            // intercept body ran in only 2 of the last 7 Youku processes while every one of them
+            // still printed status=hooked and hooked=11 miss=0. Instrumentation is a platform
+            // singleton that an app may replace in ActivityThread before the module installs, so
+            // the hook can be installed and then never see a call - and being timing dependent
+            // that looks exactly like "no ads to intercept". Activity.performCreate is called by
+            // the framework itself on every launch and cannot be swapped out from under us.
+            Class<?> activityClass = Class.forName("android.app.Activity", false, loader);
+            Method performCreate = R.find(activityClass, "performCreate", void.class, android.os.Bundle.class);
+            if (performCreate == null) {
+                H.miss("youku_tab_filter", "Activity.performCreate(Bundle) unavailable; UI rules cannot run");
+                return;
+            }
+            module.hook(performCreate).setId("youku_bottom_tabs_view").intercept(new XposedInterface.Hooker() {
                 @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     final Activity activity = (Activity) chain.getArg(0);
@@ -183,7 +194,7 @@ final class YoukuRules {
                     return result;
                 }
             });
-            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; runs after Activity resume");
+            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; runs after Activity.performCreate");
             else H.skipped("youku_tab_filter", "all tabs visible");
             if (settings.hiddenChannelNames.length != 0)
                 H.hooked("youku_channel_filter", "top channel row, View layer (data model untouched): hidden="
