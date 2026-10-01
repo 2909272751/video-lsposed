@@ -107,6 +107,7 @@ public final class MainHook extends XposedModule {
             hook(create).setId("qqlive_app_create").intercept(new XposedInterface.Hooker() {
                 @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
                     Object application = chain.getArg(0);
+                    CONTEXT_SOURCE.set("app_probe");
                     try {
                         configure(application instanceof Context ? (Context) application : null,
                                 loader, target);
@@ -138,6 +139,7 @@ public final class MainHook extends XposedModule {
                     H.diag("callActivityOnCreate fired: "
                             + (activity == null ? "null" : activity.getClass().getName()));
                     try {
+                        CONTEXT_SOURCE.set("first_activity_probe");
                         configure(activity instanceof Context ? (Context) activity : null, loader, target);
                     } catch (Throwable error) {
                         H.error("event=configure_failed", error);
@@ -173,6 +175,9 @@ public final class MainHook extends XposedModule {
             return;
         }
         try {
+            H.warn("event=ui_lifecycle_registering application=" + application.getClass().getName()
+                    + " id=" + System.identityHashCode(application)
+                    + " registered=" + application.getClass().getName());
             application.registerActivityLifecycleCallbacks(new android.app.Application.ActivityLifecycleCallbacks() {
                 @Override public void onActivityCreated(android.app.Activity a, android.os.Bundle b) {
                     if (CREATED_SEEN.compareAndSet(false, true)) {
@@ -208,8 +213,22 @@ public final class MainHook extends XposedModule {
     private static final java.util.concurrent.atomic.AtomicBoolean CREATED_SEEN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** Which probe handed configure() its Context - set by the caller before configure runs. */
+    private static final java.util.concurrent.atomic.AtomicReference<String> CONTEXT_SOURCE =
+            new java.util.concurrent.atomic.AtomicReference<String>("unknown");
+
     private void configure(Context context, ClassLoader loader, String target) {
         H.targetPackage = target;
+        // Identity of the Context that reached us. configure() can be entered from the app probe
+        // (the callApplicationOnCreate argument) or from the activity probe (an Activity), and the
+        // lifecycle callbacks registered on the Application do not dispatch - so which instance this
+        // is has to be recorded rather than assumed.
+        H.warn("event=context_identity via=" + CONTEXT_SOURCE.get()
+                + " ctx=" + (context == null ? "null" : context.getClass().getName())
+                + " id=" + System.identityHashCode(context)
+                + " isApplication=" + (context instanceof android.app.Application)
+                + " appFromActivity=" + (context instanceof android.app.Activity
+                        ? System.identityHashCode(((android.app.Activity) context).getApplication()) : -1));
         H.setReportContext(context);
         H.diag("configure enter context=" + (context == null ? "null" : context.getClass().getName()));
         if (!CONFIGURED.compareAndSet(false, true)) {
