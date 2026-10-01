@@ -179,7 +179,7 @@ final class YoukuRules {
                                 if (filtering) filterBottomBar(activity, settings);
                                 if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
                                 filterTopChannels(activity, settings);
-                                dumpViewTreeOnce(activity);
+                                if (settings.debugLog) dumpViewTreeOnce(activity);
                             }
                         }, 500);
                         if (settings.youkuBlockAdSlot) {
@@ -292,13 +292,12 @@ final class YoukuRules {
      * id) so a renamed resource still identifies itself. Enabled by 记录详细日志.
      */
     /**
-     * Exports the Activity view tree once per process.
+     * Exports the Activity view tree once per process, for locating UI containers by observation
+     * instead of by guessing. Gated behind 记录详细日志: the dump contains the whole view tree, so
+     * it must not land in the log on every launch.
      *
-     * <p>Deliberately NOT behind the debug setting for now: the previous attempt gated it on
-     * {@code settings.debugLog}, the setting demonstrably reached the process
-     * ({@code config_source=target_cache[ok] debugLog=true}) and yet nothing was emitted, so the
-     * resume path - not the flag - was the unknown. One ungated line per process settles that
-     * question; the gate comes back once the tree has actually been read once.
+     * <p>The gate was removed once during debugging because nothing was being emitted; that turned
+     * out to be a grep pattern that omitted one rule, not a gate problem. It is back.
      */
     private static void dumpViewTreeOnce(Activity activity) {
         if (!TREE_DUMPED.compareAndSet(false, true)) return;
