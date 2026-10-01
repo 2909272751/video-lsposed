@@ -117,7 +117,8 @@ rule=youku_preroll_probe status=hooked 5 read-only pre-roll control points:
 
 ### 环境阻断（两条都有硬证据，排查时先看这里）
 
-1. **优酷广告交换域名被解析到 127.0.0.1。**
+1. **优酷广告交换域名 `adx-data-u1.ubixioe.com` 解析到 127.0.0.1。**
+   **—— 本条结论已于下一节更正：三家公共 DNS 都返回 `0.0.0.0`，该域整体已停用，不是封锁。**
 
    ```
    System.err: java.net.ConnectException: Failed to connect to adx-data-u1.ubixioe.com/[::]:443
@@ -138,6 +139,59 @@ rule=youku_preroll_probe status=hooked 5 read-only pre-roll control points:
    用 logcat 的 HLS 播放状态一查，播放器其实一直在正常播放。
    优酷冷启动会自动恢复**画中画小窗**，此时视频渲在 PiP 窗口里，主窗口就是空的。
    **判据**：看播放状态只能看 logcat，不要看截图。
+
+### 更正：上一节「DNS 阻断」的结论是错的
+
+三家公共 DNS 对该域名的解析结果都是 `0.0.0.0`：
+
+```
+Resolve-DnsName adx-data-u1.ubixioe.com -Server 223.5.5.5   → 0.0.0.0
+Resolve-DnsName adx-data-u1.ubixioe.com -Server 119.29.29.29 → 0.0.0.0
+Resolve-DnsName ubixioe.com           -Server 223.5.5.5   → 0.0.0.0
+Resolve-DnsName www.youku.com         -Server 223.5.5.5   → 59.82.31.184
+```
+
+即 `ubixioe.com` **整个域没有有效 A 记录**（已停用），不是运营商 DNS 封锁、也不是本机 hosts。
+Android 把「无记录」表现为解析到 127.0.0.1，所以看起来像被墙。
+**结论：优酷前贴并非被环境阻断，换网络也不会有变化。**
+
+### 探针扩到广告物料层（第九次尝试）
+
+`youku_preroll_probe` 增加 6 个 `com.youku.xadsdk.ui.component.AdVideoView` 上的入口。
+这个视图在离线 dex 里是 `extends FrameLayout`（classes5.dex），带
+`setAdType(I)` / `setVideoSource(Ljava/lang/String;)` / `onPrepared()` / `onStart()` /
+`onComplete()` / `setOpVideoInfo(...)`。前 5 个探针是「前贴专用」，一次都没被调用；
+这一层是**任何广告视频**都会走的，作用是回答更前置的问题：到底有没有广告物料。
+
+```
+rule=youku_preroll_probe status=hooked 11 read-only pre-roll control points:
+  AndroidPlayer.initPreAdDuration, AndroidPlayer.getAdCountDown,
+  PlayerCorePlugin.skipPreAd, LivePlayerView.onPreAdStart, LivePlayerView.onPreAdEnd,
+  AdVideoView.setAdType, AdVideoView.setVideoSource, AdVideoView.onPrepared,
+  AdVideoView.onStart, AdVideoView.onComplete, AdVideoView.setOpVideoInfo
+  | not armed: isFocusPreAd: java.lang.ClassNotFoundException:
+    com.youku.player.plugins.multiscreen.MultiScreenPlugin
+```
+
+探针会记录入参：`setAdType(int)` 的整数值就是广告位编号，`setVideoSource(String)`
+是素材地址——这两条一旦出现，前贴位编号就是硬证据，不用再猜。
+
+结果：**11 个控制点全部 0 命中**，而同期 logcat 有 52 条 HLS 播放状态。
+即这些会话里**连任何广告物料都没下发过**（不只是前贴没有）。
+`not armed` 那行也是修出来的：原来 `catch (Throwable) { continue; }` 是静默的，
+「类加载失败」和「方法没被调用」这两种完全相反的结论长得一模一样。
+
+### 工具缺陷（影响过历史判断，必须知道）
+
+`tools/dexrefs.py` 的 `classes` 子命令**从来没有正确工作过**。两个独立缺陷：
+
+1. `arg = sys.argv[3]` 取到的是标志本身（`--prefix`），真正的值在 `argv[5]`，从未被读到；
+   于是每个类都在和字面量 `--prefix` 比较，**所有 dex 一律报 0 个类**。
+2. `class_defs()` 给出的是描述符 `Lcom/youku/...;`，而前缀是点分形式，比对前没有归一化。
+
+结果形如「这个包里没有这个包」，看起来像结论，实际是工具坏了。
+`--owner` 有同样的问题。三个都修了。教训：**工具报「没找到」时，先确认工具本身能找到已知存在的东西**
+（`com.youku.kubus` 在 classes13.dex，修好后立刻能列出来）。
 
 ### 附：本轮的方法论收获（比结论更重要）
 

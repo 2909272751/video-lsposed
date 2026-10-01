@@ -858,25 +858,56 @@ final class YoukuRules {
             {"com.youku.player2.live.LivePlayerView", "onPreAdStart", "1"},
             {"com.youku.player2.live.LivePlayerView", "onPreAdEnd", "1"},
             {"com.youku.player.plugins.multiscreen.MultiScreenPlugin", "isFocusPreAd", "0"},
+            // The XAdSDK ad video view. The five points above are pre-roll-specific and
+            // were never reached during playback; this one sits on the path of ANY ad
+            // video, whatever its slot, so it answers the prior question directly -
+            // "was an ad served at all, and of which type". setAdType's int value is
+            // the slot id, which is the first hard number for the pre-roll slot.
+            {"com.youku.xadsdk.ui.component.AdVideoView", "setAdType", "1"},
+            {"com.youku.xadsdk.ui.component.AdVideoView", "setVideoSource", "1"},
+            {"com.youku.xadsdk.ui.component.AdVideoView", "onPrepared", "0"},
+            {"com.youku.xadsdk.ui.component.AdVideoView", "onStart", "0"},
+            {"com.youku.xadsdk.ui.component.AdVideoView", "onComplete", "0"},
+            {"com.youku.xadsdk.ui.component.AdVideoView", "setOpVideoInfo", "1"},
         };
         int armed = 0;
         StringBuilder seen = new StringBuilder();
+        // Swallowing a load failure looks identical to "the method was never called",
+        // and those two mean opposite things. Record why a probe did not arm.
+        StringBuilder notArmed = new StringBuilder();
         for (String[] probe : probes) {
             Class<?> owner;
             try {
                 owner = R.load(loader, probe[0]);
             } catch (Throwable missing) {
+                if (notArmed.length() > 0) notArmed.append("; ");
+                notArmed.append(probe[1]).append(": ").append(missing);
                 continue;
             }
             for (Method method : owner.getDeclaredMethods()) {
                 if (!method.getName().equals(probe[1])) continue;
                 if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
+                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
                 final String where = owner.getSimpleName() + "." + method.getName();
                 try {
                     module.hook(method).setId("youku_preroll_probe_" + where).intercept(
                             new XposedInterface.Hooker() {
                                 @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                                    H.hit("youku_preroll_probe", where + "() reached",
+                                    Object a0 = null;
+                                    try {
+                                        a0 = chain.getArg(0);
+                                    } catch (Throwable noArgs) {
+                                        // no-arg probe methods have nothing to read
+                                    }
+                                    StringBuilder tail = new StringBuilder();
+                                    if (a0 instanceof Integer || a0 instanceof String) {
+                                        // setAdType(int) and setVideoSource(String) are the two
+                                        // calls that carry the ad's identity; without their values
+                                        // a hit only says "something happened", which is not enough
+                                        // to tell a pre-roll from a mid-roll.
+                                        tail.append(" arg0=").append(a0);
+                                    }
+                                    H.hit("youku_preroll_probe", where + "() reached" + tail,
                                             probeFlag(where));
                                     return chain.proceed();
                                 }
@@ -885,8 +916,9 @@ final class YoukuRules {
                     if (seen.length() > 0) seen.append(", ");
                     seen.append(where);
                     break;
-                } catch (Throwable ignored) {
-                    // Not hookable on this build; the rest of the probes still apply.
+                } catch (Throwable hookFailed) {
+                    if (notArmed.length() > 0) notArmed.append("; ");
+                    notArmed.append(where).append(": ").append(hookFailed);
                 }
             }
         }
@@ -894,7 +926,8 @@ final class YoukuRules {
             H.skipped("youku_preroll_probe", "no pre-roll control point resolved on 11.2.15");
             return;
         }
-        H.hooked("youku_preroll_probe", armed + " read-only pre-roll control points: " + seen);
+        H.hooked("youku_preroll_probe", armed + " read-only pre-roll control points: " + seen
+                + (notArmed.length() == 0 ? "" : " | not armed: " + notArmed));
     }
 
     /** 前贴控制点探针：每个探针方法各打一次。H.hit 的 once 是按对象去重的，
