@@ -1072,3 +1072,42 @@ onActivityResumed 被调用 8 次，参数在驱动处已验证非空，
 3. 若确认第一行也不打印：下一步查 YoukuRules 这个类是否被正确加载——
    同一进程内 MainHook 的 H.info 能落盘（ui_driver 就是证据），
    YoukuRules 的却不能，**这本身就是一个待解释的差异**。
+## 二十七、第 29 轮：**反射驱动一直是好的**（关键突破，0.3.27）
+
+按第 28 轮作业加了三处夹心日志：驱动调用前、onActivityResumed 第一行、调用返回后。
+
+```
+driver=9   firstline=17   returned=1   entry=0   threw=0
+event=ui_pass_firstline source=reflection activity=com.youku.kuflix.RootPageActivity settings=ok
+event=ui_pass_firstline source=reflection activity=com.youku.kuflix.RootPageActivity settings=ok
+event=ui_pass_firstline source=reflection activity=com.youku.kuflix.RootPageActivity settings=ok
+```
+
+### 两个结论
+
+**1. 反射驱动从来没坏过，它 17 次拿到了 RootPageActivity——就是首页 feed。**
+
+第 21 轮做的 scheduleUiPasses + indLiveActivity **一直是有效的**。
+之所以「第 21~26 轮看不到它」，是因为**成功路径根本不写日志**：
+只有失败才打 event=ui_tick result=no_activity。**成功的驱动在日志里是隐形的。**
+
+> 这是一个新的教训，且与前几条同类：
+> **只记录失败、不记录成功的诊断，等于没有诊断。**
+> 本项目已经栽在「静默失败」上（第 21 轮）、「异常被吞」（第 27 轮），
+> 这次栽在「成功不写日志」——**同一类错误的第三个变体**。
+
+**2. entry=0 而 	hrew=0：反射路径没有 try/catch。**
+
+第 28 轮的 catch 只包住了 MainHook 的调用点（eturned=1，那条路径正常返回）。
+而 scheduleUiPasses 的 Runnable **完全没有异常捕获**，
+所以 irstline 之后如果抛异常，**痕迹为零**。
+entry=0 + eturned=1 + 	hrew=0 三者同时成立，只有这一种解释。
+
+### 第 30 轮的作业
+
+1. **给 scheduleUiPasses 的 Runnable 加 try/catch**，上报 event=ui_pass_threw source=reflection。
+   （这是第 27 轮那条作业漏掉的一半：只包了一个调用点。）
+2. 把 ui_pass_entry 改成**无条件、无 CAS 守卫**地打一次，
+   放在 iltering/blockAdSlot/hiddenChannels 三个判断**之前**，
+   这样「进来了没有」和「判断后提前返回」就彻底分开了。
+3. 拿到反射路径的异常后修它。**反射驱动已经确认可用，这是目前最有希望的一条路。**
