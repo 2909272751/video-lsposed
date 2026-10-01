@@ -1375,3 +1375,53 @@ event=youku_viewtree_wait nodes=1   （在 500ms / 2s / 4s / 8s / 12s 反复出�
 
 > 这是最后一段路：**驱动、调度、设置、规则四层已全部验证可行，
 > 现在只差「挑对那个 Activity」。**
+## 三十四、第 38 轮：普查证明 Activity 选对了，且命中带上了来源
+
+### event=ui_activity_census（valid=2 invalid=1，1 次 GUARD_FAIL）
+
+```
+picked=RootPageActivity nodes=171   all=|RootPageActivity:n171
+picked=RootPageActivity nodes=171   all=|RootPageActivity:n171
+```
+
+**mActivities 里只有一个 Activity，而且它有 171 个节点。**
+
+所以第 35 轮那个 
+odes=1 **不是「挑错了 Activity」**——
+至少在今天这个状态下，mActivities 根本没有第二个候选。
+
+odes=1 更可能来自**更早的时点**（窗口尚未 inflate）或**另一条驱动路径**传进来的实例。
+
+> 结论修正：**「挑错 Activity」这个假设被证伪。**
+> 反射拿到的就是首页，而且它是有内容的。
+
+### 命中重新出现，并且带上了来源标记
+
+```
+hit=youku_tab_filter     hidden=3 from five-button bar src=callbacks
+hit=youku_channel_filter hidden=1 from channel row [电影] src=callbacks
+```
+
+**src=callbacks** —— 说明这次是**生命周期回调**那条路径触发的，
+而不是反射驱动或 App 基类锚点。这正是第 23 轮加来源标记的目的，现在它终于回答了问题。
+
+### 仍未解释的一处
+
+```
+pid=19165  pass_run=25  viewtree分段=0  wait=4  命中=0
+pid=19312  pass_run=22  viewtree分段=0  wait=4  命中=0
+```
+
+普查说这个 Activity 有 **171 个节点**，同一进程里 dumpViewTreeOnce 却 5 次尝试里 4 次报
+wait nodes<30，且**一次都没成功分段输出**。两者矛盾，尚未解释。
+
+### 第 39 轮的作业
+
+1. **先解决这个矛盾**：让 dumpViewTreeOnce 直接复用 decorNodes(activity) 计数，
+   并把「计数」和「分段输出」用同一次遍历完成，避免两套逻辑给出不同答案。
+2. **src=callbacks 这条路径要单独确认可靠性**：
+   跨 ≥3 个会话统计 src=callbacks 的出现率与命中关联。
+   若它才是真正可靠的那条，就以它为主驱动，反射驱动降级为补充。
+3. **端到端实测**（第 37 轮向用户承诺过、尚未做）：
+   三款 App 各播一个视频 ≥60 秒，截图记录有无倒计时前贴；
+   模块开/关各跑一次同片源做对照。**这是把「规则命中」升级为「广告真的没了」的唯一路径。**
