@@ -949,3 +949,43 @@ pid=24466  via=app_probe ✅
    （不是 warn，避免再次被级别过滤），确认「已调度」与「已执行」到底卡在哪一环。
 3. 若 Runnable 确实不执行，改用 Activity.runOnUiThread 或在
    irst_activity_probe 已经拿到 Activity 的地方**直接同步调用**一次 UI pass。
+## 二十四、第 26 轮：改用唯一被证明可达的触发点（0.3.24）
+
+### 关键发现：Instrumentation.callActivityOnCreate 会触发
+
+第 25 轮日志里的 ia=first_activity_probe 来自
+hook(Instrumentation.callActivityOnCreate)——**这个钩子确实会触发**，
+而且**每建一个 Activity 都会过一遍**，直接交出活的 Activity 实例。
+（此前「callActivityOnCreate 从不触发」的判断，同样是在 W 级别被过滤的年代得出的。）
+
+### 改动
+
+1. MainHook 新增 ACTIVE_SETTINGS 静态字段，configure() 解析完设置后写入。
+2. callActivityOnCreate 的 intercept 在 configure() 之后：
+   ``
+   H.info("event=ui_driver source=callActivityOnCreate activity=…")
+   YoukuRules.onActivityResumed((Activity) activity, live, "callActivityOnCreate")
+   ``
+   ——**只要 Activity 被创建就一定触发**，不再依赖任何「生命周期回调」，也不再依赖 Handler。
+3. ui_driver / ui_tick / youku_ui_pass_entered / ui_anchor_fired / ui_anchor_resolved
+   全部从 H.warn 改为 **H.info**，杜绝同类测量事故复发。
+
+### 本轮实测（3 个会话全部通过守门）
+
+```
+s1 valid   s2 valid   s3 valid
+pid=22973   ui_driver=0   UI命中=0
+```
+
+**但这个采样是不完整的**：从日志里只提取到 **1 个**优酷 PID（另两个会话的 PID 没取到），
+所以 **不能**据此说「新驱动不触发」——**这正是本项目反复犯的那个错误，不再犯一次**。
+
+### 第 27 轮的作业
+
+1. **先把 PID 提取做对**：不要用 Select-Object -Last N | Select-Object -Unique
+   去重取 PID（会丢）。改用「会话开始时间戳」划窗，逐个 PID 报数，
+   每个 PID 都要打印 ui_driver 与命中数，**缺的 PID 明写「未取到」而不是静默消失**。
+2. 3 个会话重新统计 source=callActivityOnCreate 的触发次数。
+3. 若 ui_driver 仍为 0：说明连 callActivityOnCreate 都没进，
+   下一手就查 ule=context_probe_activity status=hooked 是否仍打印、
+   以及这个 hook 是否在 	arget 为优酷时真的装上了。
