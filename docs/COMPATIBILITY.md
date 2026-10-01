@@ -193,6 +193,34 @@ rule=youku_preroll_probe status=hooked 11 read-only pre-roll control points:
 `--owner` 有同样的问题。三个都修了。教训：**工具报「没找到」时，先确认工具本身能找到已知存在的东西**
 （`com.youku.kubus` 在 classes13.dex，修好后立刻能列出来）。
 
+### 腾讯视频 `feed_ad_cell` 补齐命中行（2026-10-01 18:4x）
+
+此前 `feed_ad_cell` 只挂了闸门、没有命中证据——因为一直只停在首页没往下滚，
+feed 不请求新的 cell，自然没有广告格子经过那三个 `boolean(AdFeedInfo)` 闸门。
+这次把首页 feed 连滚 5 页、再切频道各滚 3 页，闸门就命中了：
+
+```
+hit=feed_ad_cell      ad feed rejected -> no ad cell (feed/focus/card/bottom)
+hit=ad_request_gate   outgoing ad request suppressed -> requestId 0
+hit=mine_ad_card      user-center ad provider injection suppressed
+```
+
+三条规则在**同一次会话**（同一 PID）里各留下一条命中行，腾讯视频至此全部有实测证据。
+
+教训和优酷那边正好相反：**闸门挂对了，但没有制造出它该拦的东西，就永远证明不了它是对的**。
+优酷 11 个控制点 0 命中，是因为那些会话里压根没有广告物料；
+腾讯这条 0 命中，是因为没滚动 feed。两者的修法都是同一件事——**制造出被拦对象**。
+
+### 优酷多剧目采样：广告层确实没被碰过（2026-10-01）
+
+换 3 个不同剧目各播 15 秒（每剧目 38/40/43 条 HLS 播放状态，都在正常播），
+`youku_preroll_probe` 的 11 个控制点仍然全部 0 命中，而同一次会话里
+`youku_home_top_ad` 有命中行（说明模块活跃、不是探针失灵）。
+
+结论：优酷的**信息流广告是会下的**（首页轮播已被 `youku_home_top_ad` 拦到并有命中），
+但**视频内容侧不下发任何广告物料**。前贴/中插在这些会话里不存在，
+继续找锚点没有意义——先要制造出被拦对象。
+
 ### 附：本轮的方法论收获（比结论更重要）
 
 **adb 每次往返要十几秒，屏幕会在往返之间掉进 Doze**，于是「改了没生效」和「改动没加载」无法区分，
