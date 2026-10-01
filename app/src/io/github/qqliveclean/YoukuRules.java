@@ -371,11 +371,21 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         if (activity == null || settings == null) return;
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
                 || !settings.youkuShowGoodMovies;
-        if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) return;
+        if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) {
+            // Reported rather than silently returned: a pass that bails out looks identical to a
+            // pass that never ran, which is exactly the ambiguity this project kept tripping over.
+            if (UI_PASS_LOGGED.compareAndSet(false, true)) {
+                H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
+                        + activity.getClass().getName() + " result=nothing_to_do filtering=" + filtering
+                        + " blockAdSlot=" + settings.youkuBlockAdSlot
+                        + " hiddenChannels=" + settings.hiddenChannelNames.length);
+            }
+            return;
+        }
         if (UI_PASS_LOGGED.compareAndSet(false, true)) {
-            H.info("event=youku_ui_pass_entered anchor=ActivityLifecycleCallbacks activity="
-                    + activity.getClass().getName() + " super=" + describeHierarchy(activity.getClass())
-                    + " filtering=" + filtering + " blockAdSlot=" + settings.youkuBlockAdSlot
+            H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
+                    + activity.getClass().getName() + " filtering=" + filtering
+                    + " blockAdSlot=" + settings.youkuBlockAdSlot
                     + " hiddenChannels=" + settings.hiddenChannelNames.length);
         }
         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
