@@ -268,7 +268,14 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
             handler.postDelayed(new Runnable() {
                 @Override public void run() {
                     Activity activity = findLiveActivity(context);
-                    if (activity == null) return;
+                    // Every tick reports its outcome. findLiveActivity used to end in
+                    // catch (Throwable) { return null; }, which made "no Activity yet" and
+                    // "reflection failed" indistinguishable - and three rounds were spent guessing
+                    // instead of reading. A driver that cannot fail loudly is not a driver.
+                    if (activity == null) {
+                        H.warn("event=ui_tick tick=" + delay + "ms result=no_activity reason=" + LAST_REFLECT_REASON.get());
+                        return;
+                    }
                     if (UI_PASS_LOGGED.compareAndSet(false, true)) {
                         H.warn("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
                                 + " activity=" + activity.getClass().getName()
@@ -280,25 +287,48 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
         }
 }
 
-/** Reads the live Activity out of ActivityThread.mActivities. Returns null when none is up yet. */
-private static Activity findLiveActivity(Context context) {
+/** Reads the live Activity out of ActivityThread.mActivities, recording why it failed. */
+    private static Activity findLiveActivity(Context context) {
         try {
             Class<?> threadClass = Class.forName("android.app.ActivityThread", false,
                     context.getClass().getClassLoader());
             Method current = R.find(threadClass, "currentActivityThread", threadClass, new Class<?>[0]);
-            Object thread = current == null ? null : current.invoke(null);
+            if (current == null) return fail("no_currentActivityThread_method");
+            Object thread = current.invoke(null);
+            if (thread == null) return fail("currentActivityThread_null");
             java.lang.reflect.Field activitiesField = R.findField(threadClass, "mActivities");
-            Object activities = activitiesField == null ? null : readField(activitiesField, thread);
-            if (!(activities instanceof java.util.Map)) return null;
-            for (Object record : ((java.util.Map<?, ?>) activities).values()) {
+            if (activitiesField == null) return fail("no_mActivities_field");
+            Object activities = readField(activitiesField, thread);
+            if (activities == null) return fail("mActivities_read_failed");
+            if (!(activities instanceof java.util.Map))
+                return fail("mActivities_not_a_map:" + activities.getClass().getName());
+            java.util.Map<?, ?> map = (java.util.Map<?, ?>) activities;
+            if (map.isEmpty()) return fail("map_empty");
+            int records = 0;
+            for (Object record : map.values()) {
+                if (record == null) continue;
+                records++;
                 Object activity = readField(R.findField(record.getClass(), "activity"), record);
-                if (activity instanceof Activity && !((Activity) activity).isFinishing()) return (Activity) activity;
+                if (activity instanceof Activity && !((Activity) activity).isFinishing()) {
+                    LAST_REFLECT_REASON.set("ok records=" + records);
+                    return (Activity) activity;
+                }
             }
-            return null;
+            return fail("no_live_activity records=" + records);
         } catch (Throwable error) {
-            return null;
+            return fail("reflect_error:" + H.describe(error));
         }
-}
+    }
+
+    /** Records the reason and returns null, so every failure path carries its own diagnosis. */
+    private static Activity fail(String reason) {
+        LAST_REFLECT_REASON.set(reason);
+        return null;
+    }
+
+    private static final java.util.concurrent.atomic.AtomicReference<String> LAST_REFLECT_REASON =
+            new java.util.concurrent.atomic.AtomicReference<String>("unset");
+
 
 /** Reflection field read that never throws; a miss is a data point, not a failure. */
 private static Object readField(java.lang.reflect.Field field, Object owner) {
