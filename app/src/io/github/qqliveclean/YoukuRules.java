@@ -56,6 +56,9 @@ final class YoukuRules {
     private static final AtomicBoolean AD_SWITCH_HIT = new AtomicBoolean(false);
     /** 前贴事件拦截的命中标记。 */
     private static final AtomicBoolean PRE_ROLL_EVENT_HIT = new AtomicBoolean(false);
+    /** 前贴控制点探针的「每个方法只打一次」标记，按方法名各持一个。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean> PROBE_FLAGS =
+            new java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean>();
     /** 事件总线探针的「只打一次」标记（探针本身每条事件只记一次名）。 */
     private static final AtomicBoolean EVENT_PROBE = new AtomicBoolean(false);
     /** 已见过的总线事件名，用于去重，避免刷屏。 */
@@ -134,6 +137,8 @@ final class YoukuRules {
         // Youku restoring its mini player, not from this rule.
         if (settings.youkuBlockPauseAd) installPreRollEventGate(module, loader);
         else H.skipped("youku_preroll_event", "disabled in settings");
+        // ---- A-3: read-only pre-roll control points ----
+        installPreRollProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -828,6 +833,78 @@ final class YoukuRules {
         else if (lower.startsWith("send")) lower = lower.substring(4);
         else if (lower.startsWith("post")) lower = lower.substring(4);
         return PRE_ROLL.matcher(lower).matches();
+    }
+
+    /**
+     * A-3：前贴控制点的<b>只读</b>探针。
+     *
+     * <p>为什么需要它：截图抓不到视频 Surface（播放器停在画中画时主窗口就是全黑），
+     * 所以「有没有前贴」不能靠肉眼判断，只能靠 logcat 里的 HLS 播放状态
+     * （{@code DOWNLOADER_LOG ... playback state updated, source:pulse, buffer_in_ms:N}）。
+     * 而前七次尝试都是「猜一个锚点，挂上，看有没有命中」——猜错了连方向都看不出来。
+     *
+     * <p>所以这里反向做：把 11.2.15 里<b>所有未混淆的前贴控制点</b>一次性挂上只读探针，
+     * 每个方法被调用就打一行。这样一次播放就能回答「前贴的控制链到底经过哪几个方法」，
+     * 下一轮直接照着命中名单挂闸门，不必再猜。
+     *
+     * <p>全部只读（{@code chain.proceed()} 原样放行），不影响任何行为。
+     */
+    private static void installPreRollProbe(MainHook module, ClassLoader loader) {
+        String[][] probes = {
+            // class, method, params-count
+            {"com.youku.alixplayer.system.AndroidPlayer", "initPreAdDuration", "0"},
+            {"com.youku.alixplayer.system.AndroidPlayer", "getAdCountDown", "0"},
+            {"com.youku.player.plugins.playercore.PlayerCorePlugin", "skipPreAd", "1"},
+            {"com.youku.player2.live.LivePlayerView", "onPreAdStart", "1"},
+            {"com.youku.player2.live.LivePlayerView", "onPreAdEnd", "1"},
+            {"com.youku.player.plugins.multiscreen.MultiScreenPlugin", "isFocusPreAd", "0"},
+        };
+        int armed = 0;
+        StringBuilder seen = new StringBuilder();
+        for (String[] probe : probes) {
+            Class<?> owner;
+            try {
+                owner = R.load(loader, probe[0]);
+            } catch (Throwable missing) {
+                continue;
+            }
+            for (Method method : owner.getDeclaredMethods()) {
+                if (!method.getName().equals(probe[1])) continue;
+                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
+                final String where = owner.getSimpleName() + "." + method.getName();
+                try {
+                    module.hook(method).setId("youku_preroll_probe_" + where).intercept(
+                            new XposedInterface.Hooker() {
+                                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                                    H.hit("youku_preroll_probe", where + "() reached",
+                                            probeFlag(where));
+                                    return chain.proceed();
+                                }
+                            });
+                    armed++;
+                    if (seen.length() > 0) seen.append(", ");
+                    seen.append(where);
+                    break;
+                } catch (Throwable ignored) {
+                    // Not hookable on this build; the rest of the probes still apply.
+                }
+            }
+        }
+        if (armed == 0) {
+            H.skipped("youku_preroll_probe", "no pre-roll control point resolved on 11.2.15");
+            return;
+        }
+        H.hooked("youku_preroll_probe", armed + " read-only pre-roll control points: " + seen);
+    }
+
+    /** 前贴控制点探针：每个探针方法各打一次。H.hit 的 once 是按对象去重的，
+     *  六个探针共用一个标记只会记下第一个，必须按方法名各持一个。 */
+    private static AtomicBoolean probeFlag(String where) {
+        AtomicBoolean flag = PROBE_FLAGS.get(where);
+        if (flag != null) return flag;
+        AtomicBoolean created = new AtomicBoolean(false);
+        AtomicBoolean existing = PROBE_FLAGS.putIfAbsent(where, created);
+        return existing != null ? existing : created;
     }
 
     private static void installPauseAdGate(MainHook module, ClassLoader loader) {

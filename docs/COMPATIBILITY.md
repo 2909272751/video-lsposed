@@ -94,6 +94,51 @@
 现改为整串匹配（`pre_?ad` + 已知后缀，可选剥掉 on/send/post 前缀）：宁可漏拦也不误拦，
 因为**误拦的表现是界面黑屏而不是报错**，比不拦更难查。
 
+### 第八次尝试（2026-10-01）：只读探针 —— 前七次失败的原因终于找到了
+
+前面七次都是「猜锚点 → 挂上 → 看命中」，猜错了连方向都看不出来。这一次改成**反向做**：
+新增只读规则 `youku_preroll_probe`，把 11.2.15 里所有**未混淆的前贴控制点**一次性挂上，
+每个方法被调用就打一行（按方法名各持一个去重标记，否则六个探针只会记下第一个）。
+
+挂上的 5 个控制点：
+
+```
+rule=youku_preroll_probe status=hooked 5 read-only pre-roll control points:
+  AndroidPlayer.initPreAdDuration, AndroidPlayer.getAdCountDown,
+  PlayerCorePlugin.skipPreAd, LivePlayerView.onPreAdStart, LivePlayerView.onPreAdEnd
+```
+
+同一次会话里**播放器确实在播**（logcat 有 30 条
+`DOWNLOADER_LOG ... playback state updated, source:pulse, buffer_in_ms:27880, play_speed:1`），
+而这 5 个控制点 **0 命中**。
+
+结论：不是锚点猜错，是**这些会话里压根没有前贴素材下发**，所以前贴代码路径从未被执行。
+下面两条解释了素材为什么拿不到。
+
+### 环境阻断（两条都有硬证据，排查时先看这里）
+
+1. **优酷广告交换域名被解析到 127.0.0.1。**
+
+   ```
+   System.err: java.net.ConnectException: Failed to connect to adx-data-u1.ubixioe.com/[::]:443
+   Caused by: failed to connect to localhost/127.0.0.1 (port 443) ... ECONNREFUSED
+   $ ping adx-data-u1.ubixioe.com → PING 127.0.0.1
+   $ cat /etc/hosts            → 只有 localhost 两行，本机没有 hosts 规则
+   $ ping www.baidu.com        → 183.2.172.177（其他域名正常）
+   ```
+
+   即 **DNS 层**把优酷的广告交换域名沉到了 localhost，`/etc/hosts` 干净，与本模块无关
+   （`private_dns_mode=hostname`，specifier 是运营商的 `t363292083.6.00p.net`）。
+   之前看到的「元气森林」前贴只能来自**已缓存的创意**，这与它反复出现同一个广告的事实一致。
+
+2. **`screencap` 抓不到视频 Surface，播放器停在小窗时主窗口全是黑的。**
+
+   这条把前几轮带进了沟里：`topResumedActivity` 明明是 `DetailActivity`，
+   截图却是一整块黑色，于是误以为是模块拦坏了播放器。
+   用 logcat 的 HLS 播放状态一查，播放器其实一直在正常播放。
+   优酷冷启动会自动恢复**画中画小窗**，此时视频渲在 PiP 窗口里，主窗口就是空的。
+   **判据**：看播放状态只能看 logcat，不要看截图。
+
 ### 附：本轮的方法论收获（比结论更重要）
 
 **adb 每次往返要十几秒，屏幕会在往返之间掉进 Doze**，于是「改了没生效」和「改动没加载」无法区分，
