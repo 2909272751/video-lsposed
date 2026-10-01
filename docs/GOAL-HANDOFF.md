@@ -1111,3 +1111,42 @@ entry=0 + eturned=1 + 	hrew=0 三者同时成立，只有这一种解释。
    放在 iltering/blockAdSlot/hiddenChannels 三个判断**之前**，
    这样「进来了没有」和「判断后提前返回」就彻底分开了。
 3. 拿到反射路径的异常后修它。**反射驱动已经确认可用，这是目前最有希望的一条路。**
+## 二十八、第 30 轮：反射路径已包上 try/catch，但出现了一个新的矛盾组合（0.3.28）
+
+改动两处（均为第 29 轮指定）：
+1. scheduleUiPasses 的 Runnable 包 try/catch → event=ui_pass_threw source=reflection
+   （第 27 轮只包了 MainHook 一个调用点，这是漏掉的另一半）。
+2. ui_pass_entry 移到三个开关判断**之前**，去掉 esult=nothing_to_do 分支。
+
+### 本轮 2 个有效会话（逐 PID 核实，非历史残留）
+
+```
+pid=3831   firstline=6   UI命中=0
+pid=7599   firstline=6   UI命中=0
+pid=15390  firstline=5   UI命中=0
+全局       firstline=34  entry=0  threw=0
+```
+
+**新组合：irstline > 0 + entry = 0 + 	hrew = 0 + 命中 = 0。**
+
+- irstline 有 → onActivityResumed 确实被调用，反射驱动确实每次都拿到 RootPageActivity；
+- 	hrew = 0 → **不抛异常**（try/catch 生效了，反射路径这次没漏）；
+- entry = 0 → 但入口日志一条都没有，而它现在位于所有判断之前、
+  且只受 UI_PASS_LOGGED.compareAndSet 守卫；
+- 命中 0 → 延迟 pass（500/3000/6000 ms）跑了但没隐藏任何东西。
+
+> **最可能的解释：UI_PASS_LOGGED.compareAndSet(false, true) 恒为 false。**
+> 若它第一次就被某个更早的调用消费掉了，而那次调用又正好没走到日志
+> （例如在 ctivity == null 之后、但守卫之前），就会同时造成
+> **「入口日志永不出现」+「后续调用全部跳过入口日志」**。
+> 这仍是推测，**下一轮用实验证伪或证实，不当成结论。**
+
+### 第 31 轮的作业
+
+1. **把 UI_PASS_LOGGED 这个 once-守卫从 ui_pass_entry 上彻底拿掉**
+   （每次进入都打一条，带 ctivity 与三个开关值）。
+   本项目已栽在 once/去重逻辑上多次（H.hit 的按对象去重、
+   早期 view tree 以 \n 开头被切），**不要再让去重掩盖事实**。
+2. **在每个延迟 pass 内部打一条**：时间点、Activity 类、三条规则各自「找到/没找到」。
+   这是回答「pass 到底跑没跑、跑了为什么没命中」的最后一块拼图。
+3. 命中一旦稳定出现，**立刻做跨会话复测**（≥3 次），再谈是否收工。
