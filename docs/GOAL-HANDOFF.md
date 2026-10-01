@@ -1,4 +1,17 @@
 
+## 零之一、**最高优先级的测量红线**（第 25 轮发现，比所有技术结论都重要）
+
+> **查日志时永远不要把日志级别写进匹配条件。**
+>
+> 第 20~25 轮我一直用 ` " 15000 I/LSPosedFramework" ` 过滤，
+> 于是 **402 条 W/LSPosedFramework 被静默丢弃**——
+> 全部诊断行（ui_anchor_resolved 84 条、context_identity 26 条）都走 W 级别。
+> 结论「第 20~25 轮驱动一次都没触发」**整段作废**，那是 grep 的锅。
+>
+> 正确写法：`  -match " 15000 " -and  -match 'qqliveclean' `
+>
+> **这条比「锁屏不能测」更致命**：它会让人把测量缺陷当成代码缺陷，
+> 然后越改越偏（本项目已经为此白改了多轮锚点）。
 ## 零、硬规矩（任何 UI 类验证都必须遵守，2026-10-01 第 24 轮血泪）
 
 > **1. 锁屏时什么都测不到。** mDreamingLockscreen=true / mWakefulness=Dozing 下，
@@ -891,3 +904,48 @@ topResumedActivity       （空）
 2. **重测命中率**：在「已解锁 + 	opResumedActivity 非空」的前提下，
    重新采 3 个会话的 src= 分布，才第一次得到**真实**的命中率数字。
    在此之前，**优酷三条 UI 规则的可靠性是未知，不是已知很差**。
+## 二十三、第 25 轮：守卫通过后重测，并推翻我自己前六轮的核心结论
+
+### 按第 24 轮硬规矩采样的 3 个会话（全部通过守门）
+
+```
+session 1  unlock ok (mWakefulness=Awake)  topResumedActivity 非空  pid=13292
+session 2  unlock ok (mWakefulness=Awake)  topResumedActivity 非空  pid=17526
+session 3  unlock ok (mWakefulness=Awake)  topResumedActivity 非空  pid=24466
+```
+
+### 换了过滤条件之后，看到的东西完全不同
+
+先前按 " 15000 I/LSPosedFramework" 过滤 → 0 命中、0 驱动日志。
+**去掉级别条件后**（" 15000 " -and 'qqliveclean'）：
+
+```
+pid=13292  event=context_identity via=app_probe ctx=com.youku.phone.Youku isApplication=true
+           event=context_identity via=first_activity_probe ctx=com.youku.ui.activity.DetailActivity
+           hit=youku_pause_ad ad_fullscreen_pause.isEnable -> "false" (r0 stays false)
+pid=17526  via=app_probe ✅   via=first_activity_probe ✅
+pid=24466  via=app_probe ✅
+全局      ui_anchor_resolved=84 条   context_identity=26 条   W/LSPosedFramework=402 行
+```
+
+**所以：反射一直能找到活着的 Activity，App 探针一直正常。**
+第 20~25 轮「第 20~25 轮驱动 0 触发」的结论**全部作废**，
+根因是 grep 把 W 级别行滤掉，**不是代码没执行**。
+
+### 仍然成立的两个真问题
+
+1. ui_tick 仍为 0：scheduleUiPasses 在 372 行被调用（install 在 367 行已执行、
+   install_summary 也打印了），但 6 个 postDelayed 的 Runnable 一次都没跑。
+2. ui_anchor_fired 仍为 0：App 基类钩子确实装了（ui_anchor_resolved 84 条），
+   但从未被调用。
+3. 新线索：irst_activity_probe 抓到的是 **DetailActivity（详情页）**，
+   不是 RootPageActivity。而 UI 规则跑在首页。
+
+### 第 26 轮的作业
+
+1. **所有脚本改用无级别过滤**（红线已写进文档顶部）。
+2. 查清 postDelayed 的 Runnable 为何不执行：
+   在 scheduleUiPasses 入口与 Runnable 入口**各打一条 H.info**
+   （不是 warn，避免再次被级别过滤），确认「已调度」与「已执行」到底卡在哪一环。
+3. 若 Runnable 确实不执行，改用 Activity.runOnUiThread 或在
+   irst_activity_probe 已经拿到 Activity 的地方**直接同步调用**一次 UI pass。
