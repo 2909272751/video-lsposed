@@ -419,6 +419,13 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                 @Override public void run() { runOneAdPass(activity, "6000ms"); }
             }, 6000);
         }
+        // The feed inflates its views over the first seconds, so the dump gets several tries and
+        // spends its budget only on a tree that actually has nodes in it.
+        for (final int offset : new int[] {2000, 4000, 8000, 12000}) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() { if (settings.debugLog) dumpViewTreeOnce(activity); }
+            }, offset);
+        }
     }
 
     /** The two follow-up passes only re-run the home carousel rule, and they say so out loud. */
@@ -538,9 +545,38 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * <p>The gate was removed once during debugging because nothing was being emitted; that turned
      * out to be a grep pattern that omitted one rule, not a gate problem. It is back.
      */
+    /**
+     * Dumps the view tree the first time a non-empty one is available.
+     *
+     * <p>The single-shot budget used to be spent at 500 ms, before the feed had inflated its views,
+     * so an empty tree was logged and nothing else ever followed. Now the budget is only spent once
+     * a tree with real nodes is in hand, and a few later offsets are tried in case the feed builds
+     * incrementally.
+     */
     private static void dumpViewTreeOnce(Activity activity) {
+        android.view.View root = activity == null ? null : activity.getWindow() == null
+                ? null : activity.getWindow().getDecorView();
+        int nodes = countNodes(root, new int[1]);
+        if (root == null || nodes < 30) {
+            H.info("event=youku_viewtree_wait nodes=" + nodes + " root=" + (root == null ? "null" : root.getClass().getName()));
+            return;
+        }
         if (!TREE_DUMPED.compareAndSet(false, true)) return;
         dumpViewTree(activity, "youku_viewtree");
+    }
+
+    /** Counts nodes in the tree, stopping early past a few hundred so this stays cheap. */
+    private static int countNodes(android.view.View view, int[] visited) {
+        if (view == null || visited[0] > 400) return 0;
+        visited[0]++;
+        int total = 1;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                total += countNodes(group.getChildAt(i), visited);
+            }
+        }
+        return total;
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean TREE_DUMPED =
