@@ -382,32 +382,53 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
                 || !settings.youkuShowGoodMovies;
         // Unconditional and ahead of every check, so "the method was entered" and "the method
-        // bailed after evaluating the switches" stay distinguishable.
-        if (UI_PASS_LOGGED.compareAndSet(false, true)) {
-            H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
-                    + activity.getClass().getName() + " filtering=" + filtering
-                    + " blockAdSlot=" + settings.youkuBlockAdSlot
-                    + " hiddenChannels=" + settings.hiddenChannelNames.length);
-        }
+        // bailed after evaluating the switches" stay distinguishable. No once-only guard: a guard
+        // here would let the first caller hide the fact that later callers ever ran.
+        H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
+                + activity.getClass().getName() + " filtering=" + filtering
+                + " blockAdSlot=" + settings.youkuBlockAdSlot
+                + " hiddenChannels=" + settings.hiddenChannelNames.length);
         if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) {
             return;
         }
         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        // Every pass reports whether it ran and what it was asked to do. De-duplication has hidden
+        // the truth too often in this project, and a pass that runs and finds nothing is
+        // indistinguishable from a pass that never ran.
         handler.postDelayed(new Runnable() {
             @Override public void run() {
-                if (filtering) filterBottomBar(activity, settings);
-                if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
-                filterTopChannels(activity, settings);
-                if (settings.debugLog) dumpViewTreeOnce(activity);
+                H.info("event=ui_pass_run offset=500ms src=" + CURRENT_SOURCE.get()
+                        + " activity=" + activity.getClass().getName()
+                        + " filtering=" + filtering + " blockAdSlot=" + settings.youkuBlockAdSlot
+                        + " hiddenChannels=" + settings.hiddenChannelNames.length);
+                try {
+                    if (filtering) filterBottomBar(activity, settings);
+                    if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
+                    filterTopChannels(activity, settings);
+                    if (settings.debugLog) dumpViewTreeOnce(activity);
+                } catch (Throwable error) {
+                    H.info("event=ui_pass_run_threw offset=500ms error=" + H.describe(error));
+                }
             }
         }, 500);
         if (settings.youkuBlockAdSlot) {
             handler.postDelayed(new Runnable() {
-                @Override public void run() { hideHomeTopAd(activity); }
+                @Override public void run() { runOneAdPass(activity, "3000ms"); }
             }, 3000);
             handler.postDelayed(new Runnable() {
-                @Override public void run() { hideHomeTopAd(activity); }
+                @Override public void run() { runOneAdPass(activity, "6000ms"); }
             }, 6000);
+        }
+    }
+
+    /** The two follow-up passes only re-run the home carousel rule, and they say so out loud. */
+    private static void runOneAdPass(Activity activity, String offset) {
+        H.info("event=ui_pass_run offset=" + offset + " src=" + CURRENT_SOURCE.get()
+                + " activity=" + activity.getClass().getName());
+        try {
+            hideHomeTopAd(activity);
+        } catch (Throwable error) {
+            H.info("event=ui_pass_run_threw offset=" + offset + " error=" + H.describe(error));
         }
     }
 
