@@ -211,6 +211,14 @@ final class YoukuRules {
                             ? new Class<?>[]{android.os.Bundle.class} : new Class<?>[0];
                     Method method = R.find(baseClass, lifecycle, void.class, params);
                     if (method == null) { H.warn("event=ui_anchor " + base + "." + lifecycle + " absent"); continue; }
+                    // Which class actually declares the method matters: R.find walks superclasses, so
+                    // asking for j.d.m.g.b.onResume can legitimately return a method declared on a
+                    // framework or AndroidX ancestor. Hooking one of those is the same silent no-op
+                    // that cost several rounds, so the declaring class is reported rather than assumed.
+                    H.warn("event=ui_anchor_resolved asked=" + base + "." + lifecycle
+                            + " declaringClass=" + method.getDeclaringClass().getName()
+                            + " static=" + java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                            + " abstract=" + java.lang.reflect.Modifier.isAbstract(method.getModifiers()));
                     module.hook(method).setId("youku_ui_" + base.replace('.', '_') + "_" + lifecycle)
                             .intercept(new XposedInterface.Hooker() {
                         @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
