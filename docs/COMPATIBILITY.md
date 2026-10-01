@@ -774,3 +774,23 @@ dexrefs.py classes      <apk> <prefix>     # 按包前缀列类
 结构不匹配会保留原始界面并写出诊断，而不是为了隐藏入口强行删除导航。
 
 本轮没有耗电对照测试，也没有手机系统重启测试；已完成的是应用进程强停重开、逐版本装包实测和设置持久化验证。
+
+### Activity-resume 路径间歇性失效（2026-10-01 20:2x，影响三条规则）
+
+`youku_tab_filter` / `youku_home_top_ad` / `youku_channel_filter` 共用同一条
+Activity-resume 路径。日志统计结果：
+
+- `youku_home_top_ad` **全程只命中过一次**（PID 22920）；
+- 最近 5 个优酷进程里这条路径命中数**全为 0**，
+  而同一批进程的 `rule=youku_tab_filter status=hooked` 与
+  `install_summary hooked=11 miss=0` **照常打印**。
+
+即：**方法解析成功、拦截体一次都没被调用**。这是本项目第三次「挂着却没被调用」。
+
+最可能的根因是钩子挂在 **`Instrumentation.callActivityOnCreate`**（平台单例）上，
+而优酷可能在挂接前就替换了 `ActivityThread` 的 `mInstrumentation`——
+时序相关，故表现为间歇性。**下一步应换到替换不掉的 `Activity` 生命周期锚点**，
+且必须跨多个会话统计命中数才算验证通过（单次会话测不出间歇性问题）。
+
+> 在此之前，`youku_tab_filter` 与 `youku_home_top_ad` 的历史命中行
+> **不能代表当前版本仍然有效**。

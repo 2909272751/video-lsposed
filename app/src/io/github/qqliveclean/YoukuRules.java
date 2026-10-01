@@ -168,7 +168,7 @@ final class YoukuRules {
                                 if (filtering) filterBottomBar(activity, settings);
                                 if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
                                 filterTopChannels(activity, settings);
-                                if (settings.debugLog) dumpViewTree(activity, "youku_viewtree");
+                                dumpViewTreeOnce(activity);
                             }
                         }, 500);
                         if (settings.youkuBlockAdSlot) {
@@ -280,6 +280,23 @@ final class YoukuRules {
      * of by guessing. Debug setting only, depth-limited, and it logs the id NAME (not the numeric
      * id) so a renamed resource still identifies itself. Enabled by 记录详细日志.
      */
+    /**
+     * Exports the Activity view tree once per process.
+     *
+     * <p>Deliberately NOT behind the debug setting for now: the previous attempt gated it on
+     * {@code settings.debugLog}, the setting demonstrably reached the process
+     * ({@code config_source=target_cache[ok] debugLog=true}) and yet nothing was emitted, so the
+     * resume path - not the flag - was the unknown. One ungated line per process settles that
+     * question; the gate comes back once the tree has actually been read once.
+     */
+    private static void dumpViewTreeOnce(Activity activity) {
+        if (!TREE_DUMPED.compareAndSet(false, true)) return;
+        dumpViewTree(activity, "youku_viewtree");
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean TREE_DUMPED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private static void dumpViewTree(Activity activity, String tag) {
         try {
             View root = activity.getWindow().getDecorView();
