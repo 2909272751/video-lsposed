@@ -367,6 +367,9 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * by 0.5 s / 3 s / 6 s, which is what the home carousel and the channel row need.
      */
     static void onActivityResumed(Activity activity, Config.Settings settings, String source) {
+        H.info("event=ui_pass_firstline source=" + source + " activity="
+                + (activity == null ? "null" : activity.getClass().getName())
+                + " settings=" + (settings == null ? "null" : "ok"));
         CURRENT_SOURCE.set(source == null ? "unknown" : source);
         if (activity == null || settings == null) return;
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip

@@ -159,6 +159,8 @@ public final class MainHook extends XposedModule {
                                 + " activity=" + activity.getClass().getName());
                         try {
                             YoukuRules.onActivityResumed((android.app.Activity) activity, live, "callActivityOnCreate");
+                            H.info("event=ui_pass_returned source=callActivityOnCreate"
+                                    + " activity=" + activity.getClass().getName());
                         } catch (Throwable error) {
                         // An Xposed intercept swallows throwables and leaves no trace, so a pass that
                         // dies mid-way looks exactly like one that never ran. Catch it here, where
