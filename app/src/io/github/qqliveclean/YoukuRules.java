@@ -417,6 +417,22 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             return;
         }
         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        // The detail page is where the countdown ad lives, and it reached this method without ever
+        // getting the 500 ms pass, so it gets its own dump schedule rather than relying on one.
+        if (!"com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (settings.debugLog) dumpViewTreeOnce(activity);
+                }
+            }, 1500);
+            for (final int offset : new int[] {4000, 8000, 12000, 16000}) {
+                handler.postDelayed(new Runnable() {
+                    @Override public void run() {
+                        if (settings.debugLog) dumpViewTreeOnce(activity);
+                    }
+                }, offset);
+            }
+        }
         // Every pass reports whether it ran and what it was asked to do. De-duplication has hidden
         // the truth too often in this project, and a pass that runs and finds nothing is
         // indistinguishable from a pass that never ran.
@@ -450,6 +466,15 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             handler.postDelayed(new Runnable() {
                 @Override public void run() { if (settings.debugLog) dumpViewTreeOnce(activity); }
             }, offset);
+        }
+        // The countdown ad only appears once playback starts, well after the passes above, so the
+        // detail page gets extra late samples of its own.
+        if (!"com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
+            for (final int offset : new int[] {2000, 5000, 9000, 15000}) {
+                handler.postDelayed(new Runnable() {
+                    @Override public void run() { if (settings.debugLog) dumpViewTreeOnce(activity); }
+                }, offset);
+            }
         }
     }
 
@@ -571,24 +596,31 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * out to be a grep pattern that omitted one rule, not a gate problem. It is back.
      */
     /**
-     * Dumps the view tree the first time a non-empty one is available.
+     * Dumps the view tree of whatever Activity is in front, up to a few times per process.
      *
-     * <p>The single-shot budget used to be spent at 500 ms, before the feed had inflated its views,
-     * so an empty tree was logged and nothing else ever followed. Now the budget is only spent once
-     * a tree with real nodes is in hand, and a few later offsets are tried in case the feed builds
-     * incrementally.
+     * <p>A single global one-shot was wrong: the budget always went to the home feed, so the
+     * detail page - where the countdown ad actually lives - could never be inspected. Dumps are
+     * now counted per Activity class, so every screen we care about gets sampled on its own.
      */
     private static void dumpViewTreeOnce(Activity activity) {
-        android.view.View root = activity == null ? null : activity.getWindow() == null
-                ? null : activity.getWindow().getDecorView();
-        int nodes = countNodes(root, new int[1]);
+        if (activity == null) return;
+        String name = activity.getClass().getName();
+        Integer used = TREE_DUMPS.get(name);
+        int count = used == null ? 0 : used.intValue();
+        if (count >= 2) return;
+        android.view.View root = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
+        int nodes = decorNodes(activity);
         if (root == null || nodes < 30) {
-            H.info("event=youku_viewtree_wait nodes=" + nodes + " root=" + (root == null ? "null" : root.getClass().getName()));
+            H.info("event=youku_viewtree_wait activity=" + name + " nodes=" + nodes);
             return;
         }
-        if (!TREE_DUMPED.compareAndSet(false, true)) return;
+        TREE_DUMPS.put(name, count + 1);
         dumpViewTree(activity, "youku_viewtree");
     }
+
+    /** Per-Activity-class dump counters, so the home feed no longer spends the detail page budget. */
+    private static final java.util.Map<String, Integer> TREE_DUMPS =
+            java.util.Collections.synchronizedMap(new java.util.HashMap<String, Integer>());
 
     /** Counts the nodes in an Activity's decor view, 0 when there is no window or nothing in it. */
     private static int decorNodes(Activity activity) {
