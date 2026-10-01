@@ -641,17 +641,64 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     private static final java.util.Set<String> RESUME_PROBE_SEEN =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
+    /**
+     * Writes one log record per depth band.
+     *
+     * <p>A single flat record was cut off around 2.9 kB, which is where the log writer's per-line
+     * limit lands - the traversal never ran out of depth. Emitting bands separately keeps every
+     * record well under the cap, so the bottom bar and channel row can no longer fall off the end
+     * silently.
+     */
     private static void dumpViewTree(Activity activity, String tag) {
         try {
             View root = activity.getWindow().getDecorView();
             if (root == null) return;
             android.content.res.Resources res = activity.getResources();
-            StringBuilder out = new StringBuilder(2048);
-            dumpNode(root, res, 0, 24, out);
-            H.warn("event=" + tag + " tree=" + out);
+            int maxDepth = 40;
+            for (int from = 0; from <= maxDepth; from += 5) {
+                StringBuilder out = new StringBuilder(2048);
+                dumpBand(root, res, from, from + 4, out);
+                if (out.length() == 0) continue;
+                H.info("event=" + tag + " depth=" + from + "-" + (from + 4) + " tree=" + out);
+            }
         } catch (Throwable error) {
-            H.warn("event=" + tag + "_error " + H.describe(error));
+            H.info("event=" + tag + "_error " + H.describe(error));
         }
+    }
+
+    /** Appends only the nodes whose depth falls inside the band. */
+    private static void dumpBand(View view, android.content.res.Resources res, int minDepth, int maxDepth,
+            StringBuilder out) {
+        if (view == null || out.length() > 1500) return;
+        int depth = 0;
+        walkToDepth(view, depth, minDepth, maxDepth, res, out);
+    }
+
+    private static void walkToDepth(View view, int depth, int minDepth, int maxDepth,
+            android.content.res.Resources res, StringBuilder out) {
+        if (view == null || out.length() > 1500) return;
+        if (depth >= minDepth && depth <= maxDepth) appendNode(view, res, depth, out);
+        if (view instanceof ViewGroup && depth <= maxDepth) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                walkToDepth(group.getChildAt(i), depth + 1, minDepth, maxDepth, res, out);
+            }
+        }
+    }
+
+    private static void appendNode(View view, android.content.res.Resources res, int depth,
+            StringBuilder out) {
+        String text = view instanceof TextView ? String.valueOf(((TextView) view).getText()) : "";
+        int id = view.getId();
+        String name = id == View.NO_ID ? "" : safeResName(res, id);
+        // No newlines: the log writer emits one record per line and would drop everything after
+        // the first break. A flat separator keeps the whole tree inside a single record.
+        out.append('|').append(repeat('.', depth)).append(view.getClass().getSimpleName())
+                .append('#').append(view.getId()).append(name.isEmpty() ? "" : "(" + name + ")")
+                .append(text.isEmpty() ? "" : " \"" + text + "\"")
+                .append(" v").append(view.getVisibility())
+                .append(" k").append(view instanceof ViewGroup ? ((ViewGroup) view).getChildCount() : 0)
+                .append(" b").append(box(view));
     }
 
     private static void dumpNode(View view, android.content.res.Resources res, int depth, int maxDepth,
