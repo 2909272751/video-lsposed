@@ -69,6 +69,43 @@
 要拦它只能落在**素材已经就绪之后**的播放决策上，而不是请求之前。`youku_ad_switch` 保留为
 「已挂接但未验证」的候选：它零运行时代价（访问器不被调用），但不能算作已生效的闸门。
 
+### 第七次尝试（2026-10-01）：Kubus 事件总线——同样被证伪
+
+优酷播放器内部用的是应用自有的一套事件总线 `com.youku.kubus.Event` / `EventBus`，
+**两者都没有混淆**，`PlayerCorePlugin.skipPreAd(Event)` 就是处理总线事件的，
+也就是说「跳过前贴」本来就是往总线上发事件——看起来是个理想拦截点。
+
+新增 `youku_preroll_event`：挂 `EventBus.post(Event)` / `post(Event,Object)` / `postSticky(Event)`
+共 **3 个重载**，并按**类型**（不是按名字，字段名会变）读出 `Event` 的 3 个 String 字段作为事件名；
+命中 `pre_?ad` 系列就整条丢弃并打命中行。结果：**0 命中**——不是「没拦住」，而是钩子一次都没被调用。
+
+两个待查原因（下一轮）：
+
+- XAdSDK 走独立插件 ClassLoader，`com.youku.kubus.EventBus` 可能存在**第二份副本**，
+  钩子挂在了播放器实际不使用的那一份上。判据：分别用 `loader` 与插件 ClassLoader 载入后
+  比较两个 Class 的身份是否相同。
+- 事件名可能不在 `Event` 自身声明的 3 个 String 字段里（探针也依赖这个读取）。
+
+配套的 `youku_event_probe`（对每个去重后的事件名打一条日志）同样 **0 条**，
+说明不是「名字没匹配上」，而是钩子根本没触发。
+
+顺带修掉一个真实隐患：最初的匹配是朴素的 `contains("pread")`，而
+`threadPrepare` 小写后是 t-h-r-ead-prepare，里面就含 "pread"——会误杀播放器的准备事件。
+现改为整串匹配（`pre_?ad` + 已知后缀，可选剥掉 on/send/post 前缀）：宁可漏拦也不误拦，
+因为**误拦的表现是界面黑屏而不是报错**，比不拦更难查。
+
+### 附：本轮的方法论收获（比结论更重要）
+
+**adb 每次往返要十几秒，屏幕会在往返之间掉进 Doze**，于是「改了没生效」和「改动没加载」无法区分，
+白烧了好几轮。正确做法是把整条时序写成脚本 `adb push` 到设备端、`adb shell sh` 一次跑完。
+解锁必须用 `input keyevent 82` 呼出密码盘再按坐标点按（本机 `input swipe` 上滑无效）。
+
+**对照实验的价值**：本轮详情页反复黑屏，怀疑是模块拦坏了播放器，于是把 `youku_preroll_event`
+整个摘掉重新构建、用完全相同的脚本重跑——**照样黑屏**。一次对照就把「模块的锅」排除掉了。
+所以黑屏是优酷**冷启动自动恢复画中画小窗（PiP）**导致的应用状态：
+`topResumedActivity` 已经是 `DetailActivity`，但主界面是黑的，点海报也打不开可观测的窗口。
+这个前置条件不解决，优酷前贴就拿不到任何证据。
+
 11.1.79 **未能测得**：安装成功（versionCode 874），但四次冷启动都在应用自身侧 ANR
 （`ActivityManager: ANR in com.youku.phone … failed to complete startup`），模块根本没有获得执行机会，
 因此不计入兼容性数据。这是该旧版本在本机的启动问题，不是模块导致。
