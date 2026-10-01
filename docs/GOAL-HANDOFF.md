@@ -1150,3 +1150,61 @@ pid=15390  firstline=5   UI命中=0
 2. **在每个延迟 pass 内部打一条**：时间点、Activity 类、三条规则各自「找到/没找到」。
    这是回答「pass 到底跑没跑、跑了为什么没命中」的最后一块拼图。
 3. 命中一旦稳定出现，**立刻做跨会话复测**（≥3 次），再谈是否收工。
+## 二十九、第 31 轮：pass 确实在跑，最后的缺口收敛到「View 选择器匹配不上」（0.3.29）
+
+按第 30 轮作业：入口日志去掉 once-守卫（每次进入都打），
+并在每个延迟 pass 内部加了 event=ui_pass_run（带时点、Activity 类、三个开关值），
+另把 3000/6000 ms 两次补跑抽成 unOneAdPass 并同样自带日志与 try/catch。
+
+### 两个有效会话（逐 PID 核实）
+
+```
+pid=22756   entry=6   pass_run=24   命中=0
+pid=23809   entry=6   pass_run=22   命中=0
+pid=15390   entry=0   pass_run=0    命中=0   （旧会话，无新代码）
+```
+
+**entry 出现了**（第 30 轮的 once-守卫推测被证伪：不是守卫的问题，是它根本抑制了日志）。
+pass_run 每个会话 22~24 次——**pass 真的在跑。**
+
+### 开关与规则状态（pid=23809，全部正常）
+
+```
+event=ui_pass_run offset=500ms src=reflection activity=com.youku.kuflix.RootPageActivity
+                  filtering=true blockAdSlot=true hiddenChannels=1
+rule=youku_tab_filter     status=hooked  five-button navigation view
+rule=youku_channel_filter status=hooked  top channel row, View layer: hidden=1 of 5
+rule=youku_home_top_ad    status=hooked  first home carousel card collapse
+```
+
+### 结论：驱动链路已经完全打通，缺口只剩最后一层
+
+**Activity 对 → 开关开 → 规则装上 → pass 跑了 22~24 次 → 但 View 层一条都没匹配到。**
+
+排障链路到此为止：
+
+| 环节 | 状态 |
+|---|---|
+| 反射拿 Activity | ✅ 每个会话都拿到 RootPageActivity |
+| 调度 pass | ✅ 22~24 次/会话 |
+| 设置送达 | ✅ config_source=target_cache[ok] |
+| 规则安装 | ✅ 三条 status=hooked |
+| **View 匹配** | ❌ **0 条** |
+
+> 第 30 轮那个「once-守卫恒为 false」的推测**被证伪**——去掉守卫后 entry 正常出现。
+> 说明之前 entry=0 是因为守卫确实在抑制，而它被谁消费掉已不重要。
+
+### 第 32 轮的作业（唯一一件事）
+
+**拿到 RootPageActivity 的真实 View 树，然后修选择器。**
+
+1. dumpViewTreeOnce 目前挂在 500 ms pass 里且只跑一次，**本轮没打出任何 youku_viewtree**。
+   改为：在 ui_pass_run offset=500ms 时**无条件**打一次（debugLog 已开），
+   且**只在第一次真正拿到非空视图树时打**（现在很可能是在视图建好前就打了一次空树，
+   于是「一次性」额度被耗尽）。
+2. 对照真实树，确认五宫格 / 频道行 / 首页轮播三类控件的**实际 class 与文本**，
+   再改 ilterBottomBar / ilterTopChannels / hideHomeTopAd 的匹配条件。
+3. **必须用 |  分隔、绝不换行**（逐行日志会把换行后的内容全部丢掉——
+   这是本项目最早的一次翻车）。
+
+> 这是最后一段路：驱动、调度、设置、规则四层都已验证可行，只差「找到真正的那个 View」。
