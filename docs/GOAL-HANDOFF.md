@@ -1208,3 +1208,54 @@ rule=youku_home_top_ad    status=hooked  first home carousel card collapse
    这是本项目最早的一次翻车）。
 
 > 这是最后一段路：驱动、调度、设置、规则四层都已验证可行，只差「找到真正的那个 View」。
+## 三十、第 32 轮：**真实 View 树拿到了**（0.3.30）
+
+改动：dumpViewTreeOnce 不再「第一次调用就打」。
+新增 countNodes()，节点数 < 30 时只打 event=youku_viewtree_wait 并**保留额度**；
+只有真正拿到非空树才消费那一次额度。
+另外在 **2000 / 4000 / 8000 / 12000 ms** 追加 4 次尝试——feed 是渐进 inflate 的，
+原先只在 500 ms 试一次，额度被一棵空树白白烧掉。
+
+```
+youku_viewtree_wait = 0
+event=youku_viewtree  = 2      ← 两个会话各拿到一棵真树
+```
+
+### RootPageActivity 的真实结构（前 900 字符，原样）
+
+```
+tree=|DecorView#-1 vis=4 kids=1 box=0,0,1264,2780
+|..LinearLayout#-1 vis=0 kids=2
+|....ViewStub#16908781(action_mode_bar_stub) vis=8
+|....FrameLayout#-1 vis=0 kids=2
+|......FitWindowsLinearLayout#2131296364(action_bar_root) vis=0 kids=2
+|........ViewStubCompat#2131296389(action_mode_bar_stub) vis=8
+|........ContentFrameLayout#16908290(content) vis=0 kids=1
+|..........TrackerFrameLayout#-1 vis=0 kids=1
+|............OneRootView#-1 vis=0 kids=1
+|..............FrameLayout#2131303071(kf_root_page) vis=0 kids=2
+|................RelativeLayout#2131303070(kf_home_layout_fragment_host) vis=0 kids=1 box=0,0,1264,2619
+|..................u#2131310756(top_bar) vis=0 kids=8 box=0,0,1264,2619
+|....................HomeViewPagerPFX#2131312647(view_pager)
+```
+
+### 这一眼就能看出的三件事
+
+1. **首页容器全部有 kf_ 前缀**：kf_root_page、kf_home_layout_fragment_host。
+   这是优酷快框架（KUF）的命名约定，**现有选择器一条都没用到它**。
+2. **	op_bar 是混淆类 u，kids=8**——顶部频道行/轮播大概率就在这 8 个孩子里，
+   而现有代码找的是具名控件。
+3. **is=0 才是 VISIBLE**：is=0 = 可见，is=8 = GONE（两个 ViewStub 都是 GONE）。
+   凡是写死 View.VISIBLE 判断的地方都要按这套语义核对。
+
+### 第 33 轮的作业
+
+1. **把 dump 打开到全量并单独取尾部**：当前输出只有 2910 字符，
+   停在 HomeViewPagerPFX(view_pager)，**五宫格底栏和频道行还没出现**。
+   需要按 kids 分支**逐段**输出（首页内容区与底栏很可能挂在 kf_root_page 的第 2 个 kid），
+   或对深度 > 12 的分支单独打一条，避免一行被截断。
+2. 拿到底栏/频道行的真实 class 与文案后，重写 ilterBottomBar / ilterTopChannels
+   的匹配条件（优先用 kf_ 前缀 + 文本，而非混淆类名）。
+3. is 语义全局复核一遍。
+
+> 注意：	ree= 后用 |  分隔、全程无换行——这条约束本项目已经违反过一次并丢过数据。
