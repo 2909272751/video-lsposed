@@ -165,8 +165,9 @@ final class YoukuRules {
             // Therefore there is no framework-class hook here any more. The UI pass is driven from
             // MainHook through ActivityLifecycleCallbacks, which is a registration API and needs no
             // hook at all. The reporting below stays so the rules remain observable.
-            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; driven by ActivityLifecycleCallbacks");
+            if (filtering) H.hooked("youku_tab_filter", "five-button navigation view; driven by the app base class anchor");
             else H.skipped("youku_tab_filter", "all tabs visible");
+            installAppClassResumeAnchor(module, loader, settings);
             if (settings.hiddenChannelNames.length != 0)
                 H.hooked("youku_channel_filter", "top channel row, View layer (data model untouched): hidden="
                         + settings.hiddenChannelNames.length + " of " + Config.CHANNEL_CATALOG.length);
@@ -181,10 +182,67 @@ final class YoukuRules {
     }
 
     /**
-     * Entry point for the UI rules, driven by {@code ActivityLifecycleCallbacks} rather than by a
-     * framework-class hook - see the anchor note in {@code install}. Called on every Activity resume
-     * and schedules a small fixed set of delayed passes, never a poll: views that arrive late are
-     * covered by 0.5 s / 3 s / 6 s, which is what the home carousel and the channel row need.
+ * Anchors the UI rules on Youku's own Activity base class.
+     *
+     * <p>Every framework-class anchor is dead on this device: {@code Instrumentation.callActivityOnCreate}
+ * never fires, the {@code android.app.Activity} lifecycle methods install and are called zero times,
+ * and registered {@code ActivityLifecycleCallbacks} are never dispatched. Hooks on app classes work
+ * normally, in the same sessions, so the rules move onto the app side.
+     *
+     * <p>The chain was read at runtime rather than guessed
+ * ({@code event=live_activities result=ok count=1}):
+ * {@code com.youku.kuflix.RootPageActivity < j.f1.l5.b.b < j.d.m.g.c < j.d.m.g.b <
+ * androidx.appcompat.app.AppCompatActivity}. {@code j.d.m.g.b} is the highest fully-owned app class
+ * on that path, so a single hook there covers every Activity the feed uses.
+     *
+     * <p>Both {@code onCreate} and {@code onResume} are hooked and each logs once: subclasses may
+     * override without calling super, so which one actually fires is evidence rather than an
+     * assumption.
+     */
+    private static void installAppClassResumeAnchor(MainHook module, ClassLoader loader,
+            final Config.Settings settings) {
+        final String[] bases = {"j.d.m.g.b", "j.d.m.g.c", "j.f1.l5.b.b"};
+        for (final String base : bases) {
+            try {
+                Class<?> baseClass = R.findClass(loader, base);
+                if (baseClass == null) { H.warn("event=ui_anchor " + base + " absent"); continue; }
+                for (String lifecycle : new String[]{"onResume", "onCreate"}) {
+                    Class<?>[] params = "onCreate".equals(lifecycle)
+                            ? new Class<?>[]{android.os.Bundle.class} : new Class<?>[0];
+                    Method method = R.find(baseClass, lifecycle, void.class, params);
+                    if (method == null) { H.warn("event=ui_anchor " + base + "." + lifecycle + " absent"); continue; }
+                    module.hook(method).setId("youku_ui_" + base.replace('.', '_') + "_" + lifecycle)
+                            .intercept(new XposedInterface.Hooker() {
+                        @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            Object result = chain.proceed();
+                            if (chain.getArg(0) instanceof Activity && UI_ANCHOR_SEEN.add(base + "." + lifecycle)) {
+                                Activity activity = (Activity) chain.getArg(0);
+                                H.warn("event=ui_anchor_fired anchor=" + base + "." + lifecycle
+                                        + " activity=" + activity.getClass().getName()
+                                        + " hierarchy=" + describeHierarchy(activity.getClass()));
+                            }
+                            if (chain.getArg(0) instanceof Activity) {
+                                onActivityResumed((Activity) chain.getArg(0), settings);
+                            }
+                            return result;
+                        }
+                    });
+                }
+                H.hooked("youku_ui_anchor", "app base class " + base + " (framework anchors are dead on this device)");
+            } catch (Throwable error) {
+                H.warn("event=ui_anchor " + base + " error " + H.describe(error));
+            }
+        }
+    }
+
+    private static final java.util.Set<String> UI_ANCHOR_SEEN =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    /**
+     * Entry point for the UI rules. Called from the app-class anchor above and from the lifecycle
+     * callbacks as a fallback. Schedules a small fixed set of delayed passes, never a poll: views
+     * that arrive late are covered by 0.5 s / 3 s / 6 s, which is what the home carousel and the
+     * channel row need.
      */
     static void onActivityResumed(Activity activity, Config.Settings settings) {
         if (activity == null || settings == null) return;

@@ -21,6 +21,39 @@ final class R {
      * precise miss reason; the return type is checked too, because obfuscated names get
      * reused with different shapes across releases.
      */
+    /**
+ * Loads an app class by binary name, returning null instead of throwing so callers can walk a list of
+ * candidate anchors and treat a miss as a data point rather than a failure.
+ */
+static Class<?> findClass(ClassLoader loader, String name) {
+    try {
+        return Class.forName(name, false, loader);
+    } catch (Throwable error) {
+        return null;
+    }
+}
+
+/**
+ * Looks a field up by name across the class and its superclasses, making it accessible. Framework
+ * fields are private and the concrete declaring class differs between releases, so a plain
+ * getDeclaredField on one class is not enough.
+ */
+static java.lang.reflect.Field findField(Class<?> owner, String name) {
+    Class<?> current = owner;
+    while (current != null) {
+        try {
+            java.lang.reflect.Field field = current.getDeclaredField(name);
+            field.setAccessible(true);
+            return field;
+        } catch (NoSuchFieldException missing) {
+            current = current.getSuperclass();
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+    return null;
+}
+
     static Method find(Class<?> owner, String name, Class<?> returnType, Class<?>... parameterTypes) {
         try {
             Method method = findInHierarchy(owner, name, parameterTypes);

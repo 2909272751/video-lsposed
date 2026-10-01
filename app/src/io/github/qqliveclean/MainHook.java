@@ -109,6 +109,11 @@ public final class MainHook extends XposedModule {
                     Object application = chain.getArg(0);
                     CONTEXT_SOURCE.set("app_probe");
                     try {
+                        dumpLiveActivities(application instanceof Context ? (Context) application : null);
+                    } catch (Throwable error) {
+                        H.warn("event=live_activities result=error " + H.describe(error));
+                    }
+                    try {
                         configure(application instanceof Context ? (Context) application : null,
                                 loader, target);
                     } catch (Throwable error) {
@@ -210,6 +215,84 @@ public final class MainHook extends XposedModule {
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** First Activity created after registration - the earliest possible callback, used as a probe. */
+    /**
+ * Asks the running process what Activities it actually has, instead of waiting to be told about
+ * them. Every Activity-creation signal is dead in Youku - callActivityOnCreate never fires, the
+ * android.app.Activity hooks install and are called zero times, and registered lifecycle callbacks
+ * are never dispatched - while callApplicationOnCreate fires reliably and hooks on the app's own
+ * classes work. So the one dependable moment is used to reflect over ActivityThread.mActivities and
+ * read the live state directly. No hook, no lifecycle callback, no framework method on the hot path.
+ */
+    private static void dumpLiveActivities(final Object application) {
+        try {
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override public void run() {
+                    StringBuilder report = new StringBuilder(512);
+                    try {
+                        Class<?> threadClass = Class.forName("android.app.ActivityThread", false,
+                                application.getClass().getClassLoader());
+                        Method current = R.find(threadClass, "currentActivityThread",
+                                threadClass, new Class<?>[0]);
+                        Object thread = current == null ? null : current.invoke(null);
+                        if (thread == null) {
+                            H.warn("event=live_activities result=unavailable reason=currentActivityThread");
+                            return;
+                        }
+                        java.lang.reflect.Field activitiesField =
+                                R.findField(threadClass, "mActivities");
+                        if (activitiesField == null) {
+                            H.warn("event=live_activities result=unavailable reason=mActivities_field");
+                            return;
+                        }
+                        Object activities = activitiesField.get(thread);
+                        int count = 0;
+                        if (activities instanceof java.util.Map) {
+                            for (Object record : ((java.util.Map<?, ?>) activities).values()) {
+                                if (record == null) continue;
+                                java.lang.reflect.Field activityField =
+                                        R.findField(record.getClass(), "activity");
+                                Object activity = readField(activityField, record);
+                                if (!(activity instanceof android.app.Activity)) continue;
+                                count++;
+                                report.append(count == 1 ? "" : " | ").append("<- ")
+                                        .append(activity.getClass().getName())
+                                        .append(" visible=").append(((android.app.Activity) activity).isFinishing());
+                            }
+                        }
+                        H.warn("event=live_activities result=ok count=" + count
+                                + " hierarchy=" + YoukuRules.describeHierarchy(
+                                        (count == 0 ? null : firstActivityClass(activities)))
+                                + " list=" + report);
+                    } catch (Throwable error) {
+                        H.warn("event=live_activities result=error " + H.describe(error));
+                    }
+                }
+            }, 6000);
+        } catch (Throwable error) {
+            H.warn("event=live_activities result=error " + H.describe(error));
+        }
+    }
+
+    private static Object readField(java.lang.reflect.Field field, Object owner) {
+        if (field == null) return null;
+        try {
+            return field.get(owner);
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    /** First live Activity class in the mActivities map, for reporting its base class. */
+    private static Class<?> firstActivityClass(Object activities) {
+        if (!(activities instanceof java.util.Map)) return null;
+        for (Object record : ((java.util.Map<?, ?>) activities).values()) {
+            if (record == null) continue;
+            Object activity = readField(R.findField(record.getClass(), "activity"), record);
+            if (activity instanceof android.app.Activity) return activity.getClass();
+        }
+        return null;
+    }
+
     private static final java.util.concurrent.atomic.AtomicBoolean CREATED_SEEN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
