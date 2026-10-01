@@ -989,3 +989,56 @@ pid=22973   ui_driver=0   UI命中=0
 3. 若 ui_driver 仍为 0：说明连 callActivityOnCreate 都没进，
    下一手就查 ule=context_probe_activity status=hooked 是否仍打印、
    以及这个 hook 是否在 	arget 为优酷时真的装上了。
+## 二十五、第 27 轮：驱动能触发，但它只看得见 DetailActivity（0.3.25）
+
+### 两个新事实（都是守门通过后采到的）
+
+**事实一：callActivityOnCreate 只交出 DetailActivity，从不交出 RootPageActivity。**
+
+```
+event=ui_driver source=callActivityOnCreate activity=com.youku.ui.activity.DetailActivity
+event=ui_driver source=callActivityOnCreate activity=com.youku.ui.activity.DetailActivity
+event=ui_driver source=callActivityOnCreate activity=com.youku.ui.activity.DetailActivity
+全局 event=ui_driver = 4    全部是 DetailActivity
+```
+
+而 UI 规则（底部五宫格 / 顶部频道行 / 首页轮播）**全都在 RootPageActivity 上**。
+s2/s3 会话的守门证据是 mCurrentFocus=com.youku.phone/com.youku.kuflix.RootPageActivity，
+**首页确实在前台**，但驱动一次都没看到它。
+
+**事实二：onActivityResumed 从未打完入口日志。**
+
+```
+event=ui_pass_entry 全局计数 = 0
+config_source=target_cache[ok] youkuSplash=true youkuAdSlot=true youkuPauseAd=true youkuBottomBar=false
+```
+
+配置是好的（youkuAdSlot=true、隐藏频道 1 个），ui_driver 也证明
+ctivity != null && settings != null，**但入口日志一条都没有**。
+最合理的解释是 **onActivityResumed 内部抛异常**，
+而异常发生在 Xposed 的 intercept 里被吞掉，**不留任何痕迹**。
+
+### 第 28 轮的作业（唯一一件事）
+
+**把 onActivityResumed 包进 try/catch，把异常打出来。**
+
+```
+try {
+    YoukuRules.onActivityResumed((Activity) activity, live, "callActivityOnCreate");
+} catch (Throwable error) {
+    H.error("event=ui_pass_threw", error);
+}
+```
+
+在异常被框架吞掉的地方手动接住并上报——这是本项目第 N 次栽在
+「异常无声消失」上（最早是 view tree 以 \n 开头被日志切掉）。
+
+拿到异常之后才谈修法。**不要先猜 hiddenChannelNames 为 null 之类的结论。**
+
+### 附：本轮 harness 的两次自身故障（都记下来）
+
+1. dumpsys activity activities 输出过大 → 管道 Broken pipe → 返回空 →
+   守门把**实际已启动**的会话误判成 GUARD_FAIL。
+   改用 dumpsys window | grep -m1 mCurrentFocus（输出小、稳定）。
+2. 设备卡在 mCurrentFocus=Window{… NotificationShade}，解锁点击全打在通知栏上。
+   **解锁流程必须先 cmd statusbar collapse。**
