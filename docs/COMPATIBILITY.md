@@ -267,6 +267,38 @@ input keyevent KEYCODE_WAKEUP; input tap 170 560
 （`dumpsys window | grep mDreamingLockscreen` 为 false 才算解锁成功）**，
 这是本项目第二次因锁屏状态作废整轮测试。
 
+### 撤下两个零命中的闸门（2026-10-01 18:48）
+
+定性之后，按「零命名的闸门不能长期挂着报 hooked」这条纪律处理：
+
+- `youku_ad_switch`（15 个 `AdOrangeConfig.getXxxConfig()` 访问器）→ **withdrawn**
+- `youku_preroll_event`（3 个 `EventBus.post/postSticky(Event)` 重载）→ **withdrawn**
+
+沿用本文件既有的撤下惯例：不是静默删掉，而是在报告里**明确写出撤下理由和证据**，
+这样报告不会把「挂了但没被调用」的东西算成覆盖：
+
+```
+rule=youku_ad_switch     status=skipped reason=withdrawn on 11.2.15:
+                         15 accessors armed, 0 hits across every sample,
+                         so it blocked nothing while still reporting hooked
+rule=youku_preroll_event status=skipped reason=withdrawn on 11.2.15:
+                         3 post overloads armed, never fired once even during
+                         confirmed playback, so nothing was intercepted
+event=install_summary hooked=10 miss=0
+```
+
+对应的实现（约 220 行）连同只为它们存在的字段一并删除，APK 从 131,855 减到 127,759 字节。
+
+**`youku_preroll_probe` 保留**：它零运行时代价（全部 `chain.proceed()`），
+而且是**唯一能在优酷真的下发广告物料时产出证据的东西**——
+第一次命中会直接打印 `AdVideoView.setAdType(int) arg0=<广告位号>`。
+撤掉它，等广告真的来了也只能重新从头找锚点。
+
+顺带记录一个已知的连带事实：`youku_mine_carousel` / `youku_mine_vip_promo` 这两条
+**在未登录状态下无法复现**——点「我的」直接进登录页（`uiautomator dump` 已确认），
+根本到不了那两个规则所在的位置。它们此前的命中行是退出登录之前取得的。
+这和「闸门无效」是两回事，不要混为一谈。
+
 ### 附：本轮的方法论收获（比结论更重要）
 
 **adb 每次往返要十几秒，屏幕会在往返之间掉进 Doze**，于是「改了没生效」和「改动没加载」无法区分，

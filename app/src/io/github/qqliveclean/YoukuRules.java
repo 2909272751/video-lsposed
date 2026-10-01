@@ -52,25 +52,9 @@ final class YoukuRules {
     private static final AtomicBoolean COLD_GATE_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean AD_SLOT_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean PAUSE_AD_HIT = new AtomicBoolean(false);
-    /** 广告 SDK 开关的「至少命中过一次」标记，只用于避免重复打日志。 */
-    private static final AtomicBoolean AD_SWITCH_HIT = new AtomicBoolean(false);
-    /** 前贴事件拦截的命中标记。 */
-    private static final AtomicBoolean PRE_ROLL_EVENT_HIT = new AtomicBoolean(false);
     /** 前贴控制点探针的「每个方法只打一次」标记，按方法名各持一个。 */
     private static final java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean> PROBE_FLAGS =
             new java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean>();
-    /** 事件总线探针的「只打一次」标记（探针本身每条事件只记一次名）。 */
-    private static final AtomicBoolean EVENT_PROBE = new AtomicBoolean(false);
-    /** 已见过的总线事件名，用于去重，避免刷屏。 */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> EVENT_NAMES_SEEN =
-            new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
-    /** 前贴事件的整串匹配式；宁可漏拦不可误拦，理由见 isPreRoll 的注释。 */
-    private static final java.util.regex.Pattern PRE_ROLL = java.util.regex.Pattern.compile(
-            "pre_?ad(start|end|view|play|playing|show|finish|finished|over|skip|error|load|loaded"
-                    + "|request|response|config|info|result|player|countdown|material|source|status)*");
-    /** 已挂过的配置开关，键为「实现类#方法名」，防止同一开关被重复挂载。 */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> AD_SWITCH_ARMED =
-            new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
     // The code and message Youku itself passes when it suppresses an ad slot.
     private static final AtomicBoolean BOTTOM_BAR_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean TAB_FILTER_HIT = new AtomicBoolean(false);
@@ -128,16 +112,23 @@ final class YoukuRules {
         // ---- P-1: full-screen pause ad ----
         if (settings.youkuBlockPauseAd) installPauseAdGate(module, loader);
         else H.skipped("youku_pause_ad", "disabled in settings");
-        // ---- A-0: per-placement switches from Youku's own ad SDK ----
-        if (settings.youkuBlockPauseAd) installAdSwitchGate(module, loader);
-        else H.skipped("youku_ad_switch", "disabled in settings");
-        // ---- A-2: pre-roll ad events on the app's own event bus ----
-        // Control run recorded 2026-10-01: with this gate removed entirely the
-        // DetailActivity still rendered black, so the blank surface comes from
-        // Youku restoring its mini player, not from this rule.
-        if (settings.youkuBlockPauseAd) installPreRollEventGate(module, loader);
-        else H.skipped("youku_preroll_event", "disabled in settings");
+        // ---- A-0: per-placement switches from Youku's own ad SDK (withdrawn) ----
+        // Armed 15 getXxxConfig() accessors on AdOrangeConfig and forced every
+        // no-arg boolean switch on the returned config to false. Across every
+        // sample it logged 0 hits, so it blocked nothing while still reporting
+        // itself as hooked. A gate that cannot be shown to intercept anything is
+        // worse than no gate: it reads as coverage. Withdrawn 2026-10-01; see
+        // docs/COMPATIBILITY.md for the refutation trail.
+        H.skipped("youku_ad_switch", "withdrawn on 11.2.15: 15 accessors armed, 0 hits across every"
+                + " sample, so it blocked nothing while still reporting hooked");
+        // ---- A-2: pre-roll ad events on the app's own event bus (withdrawn) ----
+        // The bus hooks never fired once, not even during confirmed playback.
+        // Withdrawn for the same reason: an unproven hook is not an inert one.
+        H.skipped("youku_preroll_event", "withdrawn on 11.2.15: 3 post overloads armed, never fired"
+                + " once even during confirmed playback, so nothing was intercepted");
         // ---- A-3: read-only pre-roll control points ----
+        // The probe stays: it is the only thing that will produce evidence the day
+        // Youku does serve video-side ad material, and it costs nothing at runtime.
         installPreRollProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
@@ -629,212 +620,6 @@ final class YoukuRules {
      * app-wide, all lifecycle/init handlers - verified with the call-graph index), no
      * allocation, no reflection.
      */
-    /**
-     * A-0：关掉优酷广告 SDK 每个广告位的开关。
-     *
-     * <p>前贴广告此前五次尝试都失败，根因是锚点全在混淆类或 SDK 内部方法上。这次换了一个<b>不需要猜</b>的入口：
-     * {@code com.youku.xadsdk.config.AdOrangeConfig} 没被混淆，而它每个广告位都有一个
-     * {@code getXxxConfig()}，返回的正是运行时真正在用的开关对象。
-     *
-     * <p>关键教训：{@code com.youku.xadsdk.config.model.*ConfigInfo}（Banner/Mid/Pre…）看着完美，
-     * 但对整个 dex 做引用分析后，它的 getter <b>没有任何消费者</b>，只是一份 JSON 模型，
-     * 挂上去 14 个开关、播放前贴广告时 0 命中——典型的「挂了但根本没被调用」。
-     * 真正的开关在 {@code j.f1.c8.h.m/p/r} 上（名字混淆、只有 pause/pre/splash 有布尔方法），
-     * 而它们只能经由 AdOrangeConfig 拿���，所以这里不硬编码任何一个混淆名。
-     *
-     * <p>开关名在运行时按「无参 boolean」形状发现，将来优酷再加广告位也自动覆盖。
-     */
-    private static void installAdSwitchGate(MainHook module, ClassLoader loader) {
-        final String rule = "youku_ad_switch";
-        Class<?> orange;
-        try {
-            orange = R.load(loader, "com.youku.xadsdk.config.AdOrangeConfig");
-        } catch (Throwable error) {
-            H.miss(rule, "AdOrangeConfig not found: " + H.describe(error));
-            return;
-        }
-        Method[] declared;
-        try {
-            declared = orange.getDeclaredMethods();
-        } catch (Throwable error) {
-            H.miss(rule, "cannot enumerate AdOrangeConfig: " + H.describe(error));
-            return;
-        }
-        int getters = 0;
-        for (Method getter : declared) {
-            if (getter.getParameterTypes().length != 0) continue;
-            String name = getter.getName();
-            if (!name.startsWith("get") || !name.endsWith("Config")) continue;
-            getters++;
-            final String label = name;
-            try {
-                module.hook(getter).setId("youku_adcfg_" + label).intercept(new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        Object config = chain.proceed();
-                        if (config != null) armConfigSwitches(module, config, label);
-                        return config;
-                    }
-                });
-            } catch (Throwable ignored) {
-                // One unreadable accessor must not hide the rest.
-            }
-        }
-        if (getters == 0) {
-            H.miss(rule, "no getXxxConfig() accessor on AdOrangeConfig");
-            return;
-        }
-        H.hooked(rule, getters + " getXxxConfig accessors observed; every no-arg boolean switch on the"
-                + " returned config -> false");
-    }
-
-    /** 在一个配置对象上把所有无参 boolean 方法置 false，每个方法只挂一次。 */
-    private static void armConfigSwitches(MainHook module, Object config, String label) {
-        final String rule = "youku_ad_switch";
-        Class<?> owner = config.getClass();
-        Method[] declared;
-        try {
-            declared = owner.getDeclaredMethods();
-        } catch (Throwable ignored) {
-            return;
-        }
-        for (Method switchMethod : declared) {
-            if (switchMethod.getParameterTypes().length != 0) continue;
-            if (switchMethod.getReturnType() != boolean.class) continue;
-            if (java.lang.reflect.Modifier.isAbstract(switchMethod.getModifiers())) continue;
-            final String key = owner.getName() + "#" + switchMethod.getName();
-            if (AD_SWITCH_ARMED.putIfAbsent(key, Boolean.TRUE) != null) continue;
-            final String where = label + "." + switchMethod.getName() + "()";
-            try {
-                switchMethod.setAccessible(true);
-                module.hook(switchMethod).setId("youku_adswitch_" + where).intercept(
-                        new XposedInterface.Hooker() {
-                            @Override public Object intercept(XposedInterface.Chain chain) {
-                                H.hit(rule, where + " -> false", AD_SWITCH_HIT);
-                                return Boolean.FALSE;
-                            }
-                        });
-            } catch (Throwable ignored) {
-                // Not armable on this build; the other switches still apply.
-            }
-        }
-    }
-
-    /**
-     * A-2：拦掉走事件总线的前贴广告事件。
-     *
-     * <p>前六次都拦在「SDK 发请求 / 读配置」这一层，而截图证明前贴素材是在进播放页<b>之前</b>就已经
-     * 预取好的，所以这一层天然拦不到。事件总线是另一个层��，而且是应用自己的一套机制：
-     * {@code com.youku.kubus.Event} / {@code EventBus} <b>没有混淆</b>，
-     * {@code PlayerCorePlugin.skipPreAd(Event)} 就是处理总线事件的——也就是说「跳过前贴」这个动作
-     * 本来就是往总线上丢一个事件，我们要做的是在投递前把它拦下来。
-     *
-     * <p>事件名是一个 String 字段（构造函数就是 {@code Event(String)}），字段名会变，
-     * 所以按<b>类型</b>取 String 字段再读值；命中 {@code PreAd} / {@code PREAD} / {@code pre_ad}
-     * 就不往下投递，并打一条命中行。
-     *
-     * <p>另外对任何名字里带 {@code ad} 的事件<b>按去重</b>打一条 probe 日志：
-     * 即便这次拦漏了，也能从日志里看出总线上到底流过哪些广告事件名，下一轮不用再猜。
-     */
-    private static void installPreRollEventGate(MainHook module, ClassLoader loader) {
-        final String rule = "youku_preroll_event";
-        Class<?> bus;
-        Class<?> event;
-        try {
-            bus = R.load(loader, "com.youku.kubus.EventBus");
-            event = R.load(loader, "com.youku.kubus.Event");
-        } catch (Throwable error) {
-            H.miss(rule, "Kubus event bus not found: " + H.describe(error));
-            return;
-        }
-        final java.lang.reflect.Field[] names;
-        try {
-            java.util.List<java.lang.reflect.Field> found =
-                    new ArrayList<java.lang.reflect.Field>();
-            for (java.lang.reflect.Field field : event.getDeclaredFields()) {
-                if (field.getType() != String.class) continue;
-                field.setAccessible(true);
-                found.add(field);
-            }
-            names = found.toArray(new java.lang.reflect.Field[0]);
-        } catch (Throwable error) {
-            H.miss(rule, "cannot read Event fields: " + H.describe(error));
-            return;
-        }
-        if (names.length == 0) {
-            H.miss(rule, "Event exposes no String field to read the event type from");
-            return;
-        }
-        // post(Event), post(Event,Object), postSticky(Event) - the three ways a plugin
-        // hands work to the player. Missing any one of them would leave a delivery path open.
-        int armed = 0;
-        for (Method method : bus.getDeclaredMethods()) {
-            if (!"post".equals(method.getName()) && !"postSticky".equals(method.getName())) continue;
-            final Class<?>[] params = method.getParameterTypes();
-            if (params.length == 0 || params[0] != event) continue;
-            final String label = method.getName() + "/" + params.length + "arg";
-            try {
-                module.hook(method).setId("youku_preroll_" + label).intercept(new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        Object posted = chain.getArg(0);
-                        String type = eventType(names, posted);
-                        if (type == null) return chain.proceed();
-                        if (isPreRoll(type)) {
-                            H.hit(rule, "dropped Kubus event \"" + type + "\"", PRE_ROLL_EVENT_HIT);
-                            return null;
-                        }
-                        if (EVENT_NAMES_SEEN.putIfAbsent(type, Boolean.TRUE) == null) {
-                            H.hit("youku_event_probe", "Kubus event \"" + type + "\"", EVENT_PROBE);
-                        }
-                        return chain.proceed();
-                    }
-                });
-                armed++;
-            } catch (Throwable ignored) {
-                // One missing overload must not leave the others unarmed.
-            }
-        }
-        if (armed == 0) {
-            H.miss(rule, "no EventBus.post/postSticky(Event) overload resolved");
-            return;
-        }
-        H.hooked(rule, armed + " post overloads gated; Event type read from " + names.length
-                + " String field(s)");
-    }
-
-    /** 事件类型：读 Event 上所有 String 字段，取第一个非空值。 */
-    private static String eventType(java.lang.reflect.Field[] names, Object event) {
-        if (event == null) return null;
-        for (java.lang.reflect.Field field : names) {
-            try {
-                Object value = field.get(event);
-                if (value instanceof String && ((String) value).length() > 0) return (String) value;
-            } catch (Throwable ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 事件名是否属于前贴广告。
-     *
-     * <p>这里必须精确，否则会误杀正常事件：朴素的 {@code contains("pread")} 会命中
-     * {@code threadPrepare}（小写后是 t-h-r-ead-prepare，里面就含 "pread"），
-     * 把播放器准备事件丢掉，界面会直接黑屏。真正的踩坑是<b>看不见的那种</b>——
-     * 拦多了不报错，只会表现为「界面坏了」，比不拦更难查。
-     *
-     * <p>所以规则是：去掉事件名可能的前缀 on/send/post，然后<b>整串</b>匹配
-     * {@code pre_?ad + 已知后缀}。宁可漏拦（探针会把真实事件名打出来，下一轮补），
-     * 也不能误拦（会破坏播放流程）。
-     */
-    private static boolean isPreRoll(String type) {
-        String lower = type.toLowerCase();
-        if (lower.startsWith("on")) lower = lower.substring(2);
-        else if (lower.startsWith("send")) lower = lower.substring(4);
-        else if (lower.startsWith("post")) lower = lower.substring(4);
-        return PRE_ROLL.matcher(lower).matches();
-    }
-
     /**
      * A-3：前贴控制点的<b>只读</b>探针。
      *
