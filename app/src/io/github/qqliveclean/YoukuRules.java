@@ -278,10 +278,17 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     }
                     if (UI_PASS_LOGGED.compareAndSet(false, true)) {
                         H.info("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
-                                + " activity=" + activity.getClass().getName()
-                                + " hierarchy=" + describeHierarchy(activity.getClass()));
+                                + " activity=" + activity.getClass().getName());
                     }
-                    onActivityResumed(activity, settings, "reflection");
+                    // Wrapped because round 27's catch only covered the MainHook call site and
+                    // nothing caught here: a throw after the first line left no trace at all.
+                    try {
+                        onActivityResumed(activity, settings, "reflection");
+                    } catch (Throwable error) {
+                        H.info("event=ui_pass_threw source=reflection"
+                                + " activity=" + activity.getClass().getName()
+                                + " error=" + H.describe(error));
+                    }
                 }
             }, delay);
         }
@@ -374,22 +381,16 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         if (activity == null || settings == null) return;
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
                 || !settings.youkuShowGoodMovies;
-        if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) {
-            // Reported rather than silently returned: a pass that bails out looks identical to a
-            // pass that never ran, which is exactly the ambiguity this project kept tripping over.
-            if (UI_PASS_LOGGED.compareAndSet(false, true)) {
-                H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
-                        + activity.getClass().getName() + " result=nothing_to_do filtering=" + filtering
-                        + " blockAdSlot=" + settings.youkuBlockAdSlot
-                        + " hiddenChannels=" + settings.hiddenChannelNames.length);
-            }
-            return;
-        }
+        // Unconditional and ahead of every check, so "the method was entered" and "the method
+        // bailed after evaluating the switches" stay distinguishable.
         if (UI_PASS_LOGGED.compareAndSet(false, true)) {
             H.info("event=ui_pass_entry source=" + CURRENT_SOURCE.get() + " activity="
                     + activity.getClass().getName() + " filtering=" + filtering
                     + " blockAdSlot=" + settings.youkuBlockAdSlot
                     + " hiddenChannels=" + settings.hiddenChannelNames.length);
+        }
+        if (!filtering && !settings.youkuBlockAdSlot && settings.hiddenChannelNames.length == 0) {
+            return;
         }
         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
         handler.postDelayed(new Runnable() {
