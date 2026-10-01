@@ -27,6 +27,9 @@ final class IqiyiRules {
     private static final AtomicBoolean PUMA_AD_ONCE = new AtomicBoolean(false);
     private static final AtomicBoolean AD_REQUEST_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean AD_DATA_HIT = new AtomicBoolean(false);
+    /** 开屏实现类按类名去重，避免 getter 每次返回都重复挂钩。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> SPLASH_ARMED =
+            new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
     private static WeakReference<ViewGroup> lastBar = new WeakReference<ViewGroup>(null);
     private static WeakReference<View> lastTopCard = new WeakReference<View>(null);
     private static WeakReference<View> lastMemberBanner = new WeakReference<View>(null);
@@ -34,8 +37,13 @@ final class IqiyiRules {
     private IqiyiRules() {}
 
     static void install(MainHook module, ClassLoader loader, Config.Settings settings) {
-        if (settings.iqiyiBlockSplash) installSplash(module, loader);
-        else H.skipped("iqiyi_splash", "disabled in settings");
+        if (settings.iqiyiBlockSplash) {
+            installSplash(module, loader);
+            installSplashSdkGate(module, loader);
+        } else {
+            H.skipped("iqiyi_splash", "disabled in settings");
+            H.skipped("iqiyi_splash_sdk", "disabled in settings");
+        }
         installHomeUi(module, loader, settings);
         if (settings.iqiyiBlockPlayerAds) {
                         // Only the AdsClient request gate stays armed. Everything that used to sit
@@ -203,14 +211,27 @@ final class IqiyiRules {
             // candidate is hooked: whichever one reports a hit is the class that actually
             // executes, and that is the only place a gate can be attached. If none report, hooks
             // into this whole ad path are inert and the ad cannot be gated from Java.
+            // The obfuscated prefix moves every release (fw0.a0 on 17.9.2, nw0.a0 on 17.9.5), so a
+            // candidate that no longer exists must only be reported, never abort the loop: doing so
+            // used to escape to the outer catch and mark the armed request gate itself as a miss.
             String[] candidates = {
                 "com.mcto.player.mctoplayer.PumaPlayer",
                 "com.mcto.player.mctoplayer.IMctoPlayerHandler",
                 "com.mcto.player.nativemediaplayer.MediaPlayerHandlerFunctionID",
+                "nw0.a0",
                 "fw0.a0",
             };
+            StringBuilder probeReport = new StringBuilder();
             for (String owner : candidates) {
-                Method reach = R.findByShape(R.load(loader, owner), new String[] { "OnMctoPlayerCallback" },
+                Class<?> host;
+                try {
+                    host = R.load(loader, owner);
+                } catch (Throwable missing) {
+                    if (probeReport.length() > 0) probeReport.append(", ");
+                    probeReport.append(owner).append("(absent)");
+                    continue;
+                }
+                Method reach = R.findByShape(host, new String[] { "OnMctoPlayerCallback" },
                         void.class, int.class, String.class);
                 // An interface method has no body, so there is nothing to intercept: libxposed
                 // rejects it with IllegalArgumentException, which would abort the rest of this
@@ -224,10 +245,76 @@ final class IqiyiRules {
                             return chain.proceed();
                         }
                     });
+                    if (probeReport.length() > 0) probeReport.append(", ");
+                    probeReport.append(who).append("(armed)");
                 } catch (Throwable ignored) {
                     // A probe that cannot be armed must never change the state of the real gate.
+                    if (probeReport.length() > 0) probeReport.append(", ");
+                    probeReport.append(who).append("(not armable)");
                 }
             }
+            H.hooked("iqiyi_ad_reach", "OnMctoPlayerCallback probes: " + probeReport);
+        } catch (Throwable error) {
+            H.miss(rule, H.describe(error));
+        }
+    }
+
+    /**
+     * 开屏广告的第二层闸门：拦在联盟广告 SDK 的「取开屏素材」入口上。
+     *
+     * <p>17.9.5 实测 {@code ISplashScreenApi.requestAdAndDownload()V} 已经不是开屏广告的请求点了
+     * （挂上后 0 次命中，广告照常出现）。真正的链路是聚合 SDK：{@code ya1.i.loadSplashAd(ya1.p, ya1.h)}
+     * 这一对方法在 {@code com.mcto.unionsdk} 里被 Pangle/穿山甲、GDT 等渠道实现，请求打进去才会拿到
+     * 开屏素材。把它变成空实现，就是「不取素材」，应用随后只能走自己的默认开屏。
+     *
+     * <p>接口方法没有方法体，不能挂；所以逐个挂实现类，并且把「挂了哪些、哪些不存在」写进报告——
+     * 这一层要靠命中行来判定有效，没有命中就说明它和上一���样属于失效锚点。
+     */
+    private static void installSplashSdkGate(MainHook module, ClassLoader loader) {
+        final String rule = "iqiyi_splash_sdk";
+        try {
+            Class<?> slot = R.load(loader, "ya1.p");
+            Class<?> listener = R.load(loader, "ya1.h");
+            String[] hosts = {
+                "ya1.j",
+                "ab1.l",
+                "bb1.a",
+                "cb1.d",
+                "com.mcto.unionsdk.PangleAdapter.PangleNativeAdapter",
+            };
+            StringBuilder report = new StringBuilder();
+            int armed = 0;
+            for (String owner : hosts) {
+                Class<?> host;
+                try {
+                    host = R.load(loader, owner);
+                } catch (Throwable missing) {
+                    if (report.length() > 0) report.append(", ");
+                    report.append(owner).append("(absent)");
+                    continue;
+                }
+                Method load = R.findByShape(host, new String[] { "loadSplashAd" },
+                        void.class, slot, listener);
+                if (load == null || java.lang.reflect.Modifier.isAbstract(load.getModifiers())) {
+                    if (report.length() > 0) report.append(", ");
+                    report.append(owner).append("(no concrete loadSplashAd)");
+                    continue;
+                }
+                module.hook(load).setId("youku_like_" + owner).intercept(new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) {
+                        H.hit(rule, "splash material request dropped on " + owner, SPLASH_HIT);
+                        return null;
+                    }
+                });
+                armed++;
+                if (report.length() > 0) report.append(", ");
+                report.append(owner).append("(armed)");
+            }
+            if (armed == 0) {
+                H.miss(rule, "no loadSplashAd implementation armed: " + report);
+                return;
+            }
+            H.hooked(rule, "union SDK splash requests dropped: " + report);
         } catch (Throwable error) {
             H.miss(rule, H.describe(error));
         }
@@ -472,34 +559,104 @@ final class IqiyiRules {
         return mask;
     }
 
+    /**
+     * 开屏广告闸门。
+     *
+     * <p>实现类名每次发版都会漂：17.9.2 是 {@code lz1.v}，17.9.5 变成了 {@code x02.v}，硬编码的
+     * 候选名单必然过期。所以这里改成运行时发现——{@code ModuleFetcher.getSplashScreenModule()}
+     * 属于插件框架的公开入口，类名方法名都不混淆，它返回的对象就是 {@code ISplashScreenApi}
+     * 的实现；在它上面再挂 {@code requestAdAndDownload()V}，等于每次发版自动跟上。
+     *
+     * <p>候选名单只作为兜底（万一 getter 也被混淆），并且 miss 时会把「存在但没实现该接口」的
+     * 候选列出来，让下一轮能直接看到该换成哪个类，而不用再猜。
+     */
     private static void installSplash(MainHook module, ClassLoader loader) {
         final String rule = "iqiyi_splash";
         try {
             Class<?> api = R.load(loader, "org.qiyi.video.module.api.ISplashScreenApi");
-            Method request = null;
-            Class<?> manager = null;
-            for (String candidate : new String[]{"lz1.v", "ry1.h"}) {
-                try {
-                    Class<?> found = R.load(loader, candidate);
-                    if (!api.isAssignableFrom(found)) continue;
-                    Method method = R.find(found, "requestAdAndDownload", void.class);
-                    if (method != null) { manager = found; request = method; break; }
-                } catch (ClassNotFoundException ignored) {}
+            Method getter = null;
+            try {
+                getter = R.find(R.load(loader, "org.qiyi.android.plugin.mm.ModuleFetcher"),
+                        "getSplashScreenModule", api);
+            } catch (ClassNotFoundException ignored) {
+                // 插件框架类不存在时退回候选名单
             }
-            if (request == null) {
-                H.miss(rule, "no known ISplashScreenApi implementation has requestAdAndDownload()V");
+            if (getter != null) {
+                module.hook(getter).setId("iqiyi_splash_module").intercept(new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                        Object implementation = chain.proceed();
+                        if (implementation != null) {
+                            armSplashRequestGate(module, api, implementation);
+                        }
+                        return implementation;
+                    }
+                });
+                H.hooked("iqiyi_splash_getter",
+                        "ModuleFetcher.getSplashScreenModule() observed; arms the gate on whatever class it returns");
+            }
+            // Both paths run. The candidates arm the gate immediately, which is what keeps the
+            // ad blocked on the version we just shipped; the getter is what keeps it working
+            // after the next rename. Returning early once the getter was found would leave the
+            // candidates untried - and on 17.9.5 the getter is never called during start-up,
+            // so the ad played even though the rule reported "hooked".
+            StringBuilder rejected = new StringBuilder();
+            boolean armedFromCandidate = false;
+            for (String candidate : new String[]{"x02.v", "lz1.v", "ry1.h"}) {
+                Class<?> found;
+                try {
+                    found = R.load(loader, candidate);
+                } catch (ClassNotFoundException missing) {
+                    continue;
+                }
+                if (!api.isAssignableFrom(found)) {
+                    rejected.append(rejected.length() > 0 ? ", " : "").append(candidate)
+                            .append("(not ISplashScreenApi)");
+                    continue;
+                }
+                Method method = R.find(found, "requestAdAndDownload", void.class);
+                if (method == null) {
+                    rejected.append(rejected.length() > 0 ? ", " : "").append(candidate)
+                            .append("(no requestAdAndDownload)");
+                    continue;
+                }
+                armSplashRequestGate(module, api, found);
+                armedFromCandidate = true;
+                break;
+            }
+            if (armedFromCandidate) return;
+            if (getter != null) {
+                // Nothing to arm yet; the gate will be armed the first time the app asks for the
+                // module. Report it as hooked rather than missed, because the hook is in place.
                 return;
             }
-            final String owner = manager.getName();
+            H.miss(rule, "no ISplashScreenApi implementation reachable (getter missing, candidates: "
+                    + (rejected.length() == 0 ? "(none of x02.v/lz1.v/ry1.h exist)" : rejected) + ")");
+        } catch (Throwable error) {
+            H.miss(rule, H.describe(error));
+        }
+    }
+
+    /** 在开屏实现类上挂 requestAdAndDownload 闸门；同一实现类只挂一次。 */
+    private static void armSplashRequestGate(MainHook module, Class<?> api, Object implementation) {
+        final String rule = "iqiyi_splash";
+        Class<?> owner = implementation instanceof Class ? (Class<?>) implementation : implementation.getClass();
+        if (!api.isAssignableFrom(owner)) return;
+        if (SPLASH_ARMED.putIfAbsent(owner.getName(), Boolean.TRUE) != null) return;
+        try {
+            Method request = R.find(owner, "requestAdAndDownload", void.class);
+            if (request == null) {
+                H.miss(rule, owner.getName() + " implements ISplashScreenApi but has no requestAdAndDownload()V");
+                return;
+            }
             module.hook(request).setId("iqiyi_splash_request").intercept(new XposedInterface.Hooker() {
                 @Override public Object intercept(XposedInterface.Chain chain) {
-                    H.hit(rule, "requestAdAndDownload suppressed", SPLASH_HIT);
+                    H.hit(rule, "requestAdAndDownload suppressed on " + owner.getName(), SPLASH_HIT);
                     return null;
                 }
             });
-            H.hooked(rule, owner + ".requestAdAndDownload()V suppressed");
+            H.hooked(rule, owner.getName() + ".requestAdAndDownload()V suppressed");
         } catch (Throwable error) {
-            H.miss(rule, H.describe(error));
+            H.miss(rule, owner.getName() + ": " + H.describe(error));
         }
     }
 

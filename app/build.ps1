@@ -35,13 +35,35 @@ $d8Candidates = @()
 if ($env:R8_JAR) { $d8Candidates += $env:R8_JAR }
 $d8Candidates += @(Get-ChildItem -LiteralPath (Join-Path $sdk 'd8') -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'r8-*.jar' } | Sort-Object Name -Descending | ForEach-Object FullName)
+# Sort by the build-tools directory version, newest first. Plain -Recurse enumeration
+# returns 34.0.0 before 35.0.0, and that older jar bundles R8 3.3.20, which dies while
+# dexing with "Cannot invoke String.length() because <parameter1> is null".
 $d8Candidates += @(Get-ChildItem -LiteralPath (Join-Path $sdk 'build-tools') -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq 'd8.jar' } | ForEach-Object FullName)
+    Where-Object { $_.Name -eq 'd8.jar' } |
+    Sort-Object { [version]($_.Directory.Parent.Name) } -Descending | ForEach-Object FullName)
 $d8Jar = $d8Candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 if (-not $d8Jar) { throw "No D8 jar found. Set `$env:R8_JAR to a com.android.tools:r8 jar from dl.google.com/dl/android/maven2." }
 $zipalign = Join-Path $tools 'zipalign.exe'
 $apksigner = Join-Path $tools 'apksigner.bat'
-$stage = Join-Path $env:TEMP ('qlc-' + [guid]::NewGuid().ToString('N'))
+# Staging directory. $env:TEMP first, but a workspace-local fallback when TEMP is not
+# writable by the toolchain: some sandboxes confine spawned processes (javac, d8) to the
+# workspace, and javac then fails with "could not create parent directories".
+$stageParent = $env:TEMP
+if ($env:QLC_BUILD_TMP) {
+    $stageParent = $env:QLC_BUILD_TMP
+} else {
+    $probe = Join-Path $workspace '.qlc-build-probe'
+    try {
+        New-Item -ItemType Directory -Force -Path $probe | Out-Null
+        Set-Content -LiteralPath (Join-Path $probe 'probe.txt') -Value 'probe' -Encoding ASCII
+        Remove-Item -LiteralPath $probe -Recurse -Force -ErrorAction SilentlyContinue
+        $stageParent = Join-Path $workspace '.qlc-build'
+        New-Item -ItemType Directory -Force -Path $stageParent | Out-Null
+    } catch {
+        $stageParent = $env:TEMP
+    }
+}
+$stage = Join-Path $stageParent ('qlc-' + [guid]::NewGuid().ToString('N'))
 $dist = Join-Path $app 'dist'
 $keystore = Join-Path $app 'debug.keystore'
 $output = Join-Path $dist 'video-clean-v0.3.12.apk'
@@ -85,24 +107,32 @@ try {
     Run-Native 'DEX conversion' { & $java -Xmx3072M -cp $d8Jar com.android.tools.r8.D8 --min-api 26 --lib $androidJar --output (Join-Path $stage 'dex') $classesJar $serviceJar }
 
     Write-Host 'Packaging Android resources'
-    $compiledRes = Join-Path $stage 'resources.zip'
-    Run-Native 'Resource compilation' { & $aapt2 compile --dir (Join-Path $stage 'res') -o $compiledRes }
-    $unsigned = Join-Path $stage 'out\module.apk'
-    Run-Native 'APK linking' { & $aapt2 link -o $unsigned --manifest (Join-Path $stage 'AndroidManifest.xml') -I $androidJar --min-sdk-version 26 --target-sdk-version 34 $compiledRes }
-    # Both assemblies are needed on Windows PowerShell 5.1: FileSystem supplies ZipFile,
-    # Compression supplies ZipArchiveMode.
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    Add-Type -AssemblyName System.IO.Compression
-    $archive = [System.IO.Compression.ZipFile]::Open($unsigned, [System.IO.Compression.ZipArchiveMode]::Update)
+    # aapt2 and zipalign are native binaries. On a workspace whose path contains
+    # non-ASCII characters they fail with "failed to open directory ... (2)" when the
+    # path is passed as an absolute argument, while the same directory opens fine when
+    # it is resolved relative to the current directory. So both are invoked from inside
+    # the staging directory with relative paths; only the final artifact leaves with an
+    # absolute path (apksigner is a JVM tool and handles Unicode paths correctly).
+    Push-Location -LiteralPath $stage
     try {
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $stage 'dex\classes.dex'), 'classes.dex') | Out-Null
-        Get-ChildItem -LiteralPath (Join-Path $stage 'META-INF') -Recurse -File | ForEach-Object {
-            $relative = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $relative) | Out-Null
-        }
-    } finally { $archive.Dispose() }
+        Run-Native 'Resource compilation' { & $aapt2 compile --dir res -o resources.zip }
+        Run-Native 'APK linking' { & $aapt2 link -o out/module.apk --manifest AndroidManifest.xml -I android.jar --min-sdk-version 26 --target-sdk-version 34 resources.zip }
+        # Both assemblies are needed on Windows PowerShell 5.1: FileSystem supplies ZipFile,
+        # Compression supplies ZipArchiveMode.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        Add-Type -AssemblyName System.IO.Compression
+        $unsigned = Join-Path $stage 'out\module.apk'
+        $archive = [System.IO.Compression.ZipFile]::Open($unsigned, [System.IO.Compression.ZipArchiveMode]::Update)
+        try {
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $stage 'dex\classes.dex'), 'classes.dex') | Out-Null
+            Get-ChildItem -LiteralPath (Join-Path $stage 'META-INF') -Recurse -File | ForEach-Object {
+                $relative = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $relative) | Out-Null
+            }
+        } finally { $archive.Dispose() }
+        Run-Native 'APK alignment' { & $zipalign -f 4 out/module.apk out/module-aligned.apk }
+    } finally { Pop-Location }
     $aligned = Join-Path $stage 'out\module-aligned.apk'
-    Run-Native 'APK alignment' { & $zipalign -f 4 $unsigned $aligned }
 
     # Local test key only. Preserve app/debug.keystore to allow in-place upgrades.
     $env:QQLIVE_TEST_KEYPASS = 'android'
@@ -118,8 +148,8 @@ try {
     Remove-Item Env:QQLIVE_TEST_KEYPASS -ErrorAction SilentlyContinue
     if (-not $KeepBuildDirectory -and (Test-Path -LiteralPath $stage)) {
         $resolved = [IO.Path]::GetFullPath($stage)
-        $tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
-        if (-not $resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $stageRoot = [IO.Path]::GetFullPath($stageParent).TrimEnd('\') + '\'
+        if (-not $resolved.StartsWith($stageRoot, [StringComparison]::OrdinalIgnoreCase) -or
             -not [IO.Path]::GetFileName($resolved).StartsWith('qlc-')) {
             throw "Refusing to remove unexpected build directory: $resolved"
         }

@@ -21,6 +21,15 @@
 模块记录的验证版本 **9.04.55.32321** 高于豌豆荚可获取的最高版本（32299），该版本号沿用自前序逆向，
 本轮**未能在真机上复现**。腾讯视频的 `MIN_VERSION_CODE = 31000` 这个地板略乐观：31245 已经掉到 13/5。
 
+**2026-10-01 真机复现 9.04.55.32321（未登录）**
+
+| 项 | 结果 |
+|---|---|
+| 报告 | `install_summary` 未打印该进程（启动期日志被后续进程覆盖），逐项 `installs` 显示 `feed_ad_cell=ok` |
+| 命中 | `hit=ad_request_gate`（outgoing ad request suppressed）、`hit=mine_ad_card` |
+| `feed_ad_cell` 三个闸门 | 用 `tools/dexrefs.py` 在 9.04.55 的 dex 上核对，三处签名全部健在：`ona.ad.universal.g.b(AdFeedInfo)Z`、`ona.ad.b.y(AdFeedInfo)Z`、`ona.ad.feed.a.v(AdFeedInfo)Z` |
+| 结论 | 结构完好、已挂接，但未登录会话里首页信息流与播放页下方推荐流都没有渲染出广告格子，因此**本轮拿不到 `hit=feed_ad_cell`**。该规则的命中证据仍停留在 9.04.51.32299；不要把「已挂接」当成「已验证」。 |
+
 ### 优酷 `com.youku.phone`
 
 | 版本 | matched | miss | push_notify |
@@ -31,6 +40,34 @@
 
 **结论：11.2.13 → 11.1.65 全版本零 miss**，规则集不随小版本漂移。模块记录的 11.2.15（920）同样高于
 豌豆荚可获取的最高版本（917），本轮未在真机复现。
+
+**2026-10-01 真机复现 11.2.15（未登录）**
+
+| 项 | 结果 |
+|---|---|
+| 报告 | `install_summary hooked=10 miss=0`，`self_test` 通过 |
+| 命中 | `youku_mine_carousel`、`youku_mine_vip_promo`、`youku_pause_ad`、`youku_tab_filter` |
+| 开屏 | 冷启动未出现开屏广告 |
+| 前贴 | **未解决**。一次实测中出现「元气森林」15s 前贴（带「广告」角标），一次实测中直接进入正片 |
+
+### 第六次尝试（2026-10-01）：`AdOrangeConfig` 的按广告位开关——被证伪
+
+优酷的广告 SDK 有两套看起来一样的配置，必须分清楚，否则会重复前五次「挂上了但没人调用」的错误：
+
+| 包 | 角色 | 引用分析结果 |
+|---|---|---|
+| `com.youku.xadsdk.config.model.*ConfigInfo` | **只是 JSON 模型**（`BannerConfigInfo` / `MidConfigInfo` / `PreConfigInfo`…，每个都有漂亮的 `getEnabled()Z`） | 对 11.2.15 全量 dex 做 `refs` 查询，这些类的 getter **没有任何消费者**。挂上去 14 个开关，播放前贴广告时 **0 命中** |
+| `com.youku.xadsdk.config.AdOrangeConfig` | **运行时的活路径**：15 个 `getXxxConfig()`，返回 `j.f1.c8.h.*` 上的开关对象 | 活路上只有 pause(`m.f()`)、pre(`p.e()`/`p.f()`)、splash(`r.f()`~`r.i()`) 有无参 boolean |
+
+因此新增 `youku_ad_switch`：挂 `AdOrangeConfig` 的 15 个 `getXxxConfig()`（类名方法名都不混淆），
+在返回值上按「无参 boolean」形状发现开关并置 false——**不硬编码任何混淆名**。
+结果：**仍 0 命中**。这些访问器在本轮会话里一次都没被调用，说明优酷的前贴开关并不走这条分支。
+
+**结论（第六次）：优酷前贴广告的广告位开关不是可拦截点。** 前五次 + 本次共六次尝试的共同点在于：
+锚点都落在「SDK 读配置/发请求」这一层，而优酷的前贴素材是由快手联盟在**进入播放页之前**就已经
+预取/预渲染好的（截图里前贴在详情页打开后数秒内即出现，且 `stc=tk_…` 的 `noPreAd` 只在播放后才上报）。
+要拦它只能落在**素材已经就绪之后**的播放决策上，而不是请求之前。`youku_ad_switch` 保留为
+「已挂接但未验证」的候选：它零运行时代价（访问器不被调用），但不能算作已生效的闸门。
 
 11.1.79 **未能测得**：安装成功（versionCode 874），但四次冷启动都在应用自身侧 ANR
 （`ActivityManager: ANR in com.youku.phone … failed to complete startup`），模块根本没有获得执行机会，
@@ -52,6 +89,33 @@
 `iqiyi_splash` 的 miss 原因是 `no known ISplashScreenApi implementation has requestAdAndDownload()V`
 ——实现类换名了，属于锚点漂移而非功能整体失效；开屏之后的首页与个人中心规则仍全部命中。
 **结论：开屏规则在 17.9.2 可用，往下到 14.9.5 持续失效；其余规则跨这四个版本稳定。**
+
+**2026-10-01 真机复现 17.9.5（未登录）：开屏广告已真正被拦下**
+
+| 项 | 结果 |
+|---|---|
+| 报告 | `install_summary hooked=11 miss=0`（改造前为 `hooked=8 miss=2`） |
+| 命中 | `hit=iqiyi_splash requestAdAndDownload suppressed on x02.v`，每次冷启动都出现 |
+| 实测 | 清空应用数据后首次冷启动，**没有开屏广告**，直接进入首页 |
+
+三处改动与各自的证据：
+
+1. **`iqiyi_ad_request` 的假 miss（bug，不是锚点问题）**：探测 `fw0.a0` 时抛出的
+   `ClassNotFoundException` 会跳出循环落进外层 `catch`，把**已经挂好的请求闸**记成 miss。
+   改为每个候选各自 try/catch，并把这个类升级为独立的 `iqiyi_ad_reach` 规则，
+   报告里能看到 `PumaPlayer(armed), nw0.a0(armed), fw0.a0(absent)`。
+   混淆前缀每次发版都换（17.9.2 是 `fw0.a0`，17.9.5 是 `nw0.a0`），候选不存在只应被记录，不该影响别的规则。
+2. **开屏实现类重锚**：17.9.2 的 `lz1.v` 在 17.9.5 变成了 `x02.v`（`super=BaseCommunication`，
+   `implements ISplashScreenApi`）。与其继续维护混淆类名单，不如用插件框架的公开入口
+   `org.qiyi.android.plugin.mm.ModuleFetcher.getSplashScreenModule()`（**未混淆**）在运行时拿到实现对象，
+   再在它上面挂 `requestAdAndDownload()V`。
+   两条路径同时生效：候选类立刻挂上（保证当前版本有效），getter 作为发版后自动跟上的兜底。
+3. **开屏广告素材有本地缓存**：清数据前每次冷启动都播同一条「摇一摇手机」广告，即使请求被拦也照播。
+   17.9.5 有 `cache_splash_ad` / `SplashAdCacheManager` / `TYPE_CACHED_SPLASH` 这套缓存，
+   请求闸只挡「新素材」，不挡「已缓存的素材」。清一次应用数据即可，之后不再复现。
+
+新增的 `iqiyi_splash_sdk`（联盟 SDK `ya1.i.loadSplashAd(ya1.p, ya1.h)` 逐实现类置空）**已挂接但 0 命中**，
+属于冗余层：真正生效的是上面第 2 条。它零代价地留着，但要按「未验证」看待。
 
 ## 未登录各界面的广告排查（2026-09-30 实测）
 
@@ -311,6 +375,28 @@ Java 层无从挂钩。腾讯已验证的那类 Java 闸门在这里没有对应
 
 自检只证明**判定函数本身**正确（没有真机广告通知样本）。实际拦截条数需在真实收到促销推送后，
 从「兼容结果」页或 `adb logcat -s QQLiveClean | grep push_notify` 读 `已拦广告通知 N 条 / 共见到 M 条`。
+
+## 离线定位工具：`tools/dexrefs.py`
+
+前六次锚点失败有个共同根因：**只能靠字符串猜名字**。`tools/dexscan.py` 只能回答「这个名字在不在」，
+而锚点真正需要回答的是「谁实现了这个接口」「这个方法的完整签名是什么」「这个类到底有没有人用」。
+`dexrefs.py` 直接解析 dex 的索引表（string/type/proto/method/class_data，只读表不解指令），
+所以一个 240 MB 的 12-dex APK 约 3 秒扫完：
+
+```
+dexrefs.py implementors <apk> <fqcn>      # 谁实现了这个接口
+dexrefs.py methods      <apk> <name>       # 哪些类声明了这个方法，完整签名 + 是否 abstract
+dexrefs.py hierarchy    <apk> <fqcn>       # 单个类的父类/接口/全部方法
+dexrefs.py byreturn     <apk> <fqcn>       # 哪些方法返回这个类型（找未混淆的 getter）
+dexrefs.py refs         <apk> <fqcn>       # 谁引用了这个类型（判断「是不是死代码」）
+dexrefs.py classes      <apk> <prefix>     # 按包前缀列类
+```
+
+本轮靠它拿到三个决定性结论：爱奇艺开屏实现类 `lz1.v → x02.v`、腾讯三处
+`boolean(AdFeedInfo)Z` 闸门在 9.04.55 仍然健在、以及优酷 `*ConfigInfo` 是**没有任何消费者的死代码**
+（`refs` 查询只有自己的 setter 返回自己）。
+
+判定「挂上了」的证据仍然只有真机 `hit=` 行；这些离线工具只用来决定**该挂哪里**。
 
 ## 如何理解兼容结果
 

@@ -52,6 +52,11 @@ final class YoukuRules {
     private static final AtomicBoolean COLD_GATE_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean AD_SLOT_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean PAUSE_AD_HIT = new AtomicBoolean(false);
+    /** 广告 SDK 开关的「至少命中过一次」标记，只用于避免重复打日志。 */
+    private static final AtomicBoolean AD_SWITCH_HIT = new AtomicBoolean(false);
+    /** 已挂过的配置开关，键为「实现类#方法名」，防止同一开关被重复挂载。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> AD_SWITCH_ARMED =
+            new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
     // The code and message Youku itself passes when it suppresses an ad slot.
     private static final AtomicBoolean BOTTOM_BAR_HIT = new AtomicBoolean(false);
     private static final AtomicBoolean TAB_FILTER_HIT = new AtomicBoolean(false);
@@ -109,6 +114,9 @@ final class YoukuRules {
         // ---- P-1: full-screen pause ad ----
         if (settings.youkuBlockPauseAd) installPauseAdGate(module, loader);
         else H.skipped("youku_pause_ad", "disabled in settings");
+        // ---- A-0: per-placement switches from Youku's own ad SDK ----
+        if (settings.youkuBlockPauseAd) installAdSwitchGate(module, loader);
+        else H.skipped("youku_ad_switch", "disabled in settings");
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -599,6 +607,96 @@ final class YoukuRules {
      * app-wide, all lifecycle/init handlers - verified with the call-graph index), no
      * allocation, no reflection.
      */
+    /**
+     * A-0：关掉优酷广告 SDK 每个广告位的开关。
+     *
+     * <p>前贴广告此前五次尝试都失败，根因是锚点全在混淆类或 SDK 内部方法上。这次换了一个<b>不需要猜</b>的入口：
+     * {@code com.youku.xadsdk.config.AdOrangeConfig} 没被混淆，而它每个广告位都有一个
+     * {@code getXxxConfig()}，返回的正是运行时真正在用的开关对象。
+     *
+     * <p>关键教训：{@code com.youku.xadsdk.config.model.*ConfigInfo}（Banner/Mid/Pre…）看着完美，
+     * 但对整个 dex 做引用分析后，它的 getter <b>没有任何消费者</b>，只是一份 JSON 模型，
+     * 挂上去 14 个开关、播放前贴广告时 0 命中——典型的「挂了但根本没被调用」。
+     * 真正的开关在 {@code j.f1.c8.h.m/p/r} 上（名字混淆、只有 pause/pre/splash 有布尔方法），
+     * 而它们只能经由 AdOrangeConfig 拿���，所以这里不硬编码任何一个混淆名。
+     *
+     * <p>开关名在运行时按「无参 boolean」形状发现，将来优酷再加广告位也自动覆盖。
+     */
+    private static void installAdSwitchGate(MainHook module, ClassLoader loader) {
+        final String rule = "youku_ad_switch";
+        Class<?> orange;
+        try {
+            orange = R.load(loader, "com.youku.xadsdk.config.AdOrangeConfig");
+        } catch (Throwable error) {
+            H.miss(rule, "AdOrangeConfig not found: " + H.describe(error));
+            return;
+        }
+        Method[] declared;
+        try {
+            declared = orange.getDeclaredMethods();
+        } catch (Throwable error) {
+            H.miss(rule, "cannot enumerate AdOrangeConfig: " + H.describe(error));
+            return;
+        }
+        int getters = 0;
+        for (Method getter : declared) {
+            if (getter.getParameterTypes().length != 0) continue;
+            String name = getter.getName();
+            if (!name.startsWith("get") || !name.endsWith("Config")) continue;
+            getters++;
+            final String label = name;
+            try {
+                module.hook(getter).setId("youku_adcfg_" + label).intercept(new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                        Object config = chain.proceed();
+                        if (config != null) armConfigSwitches(module, config, label);
+                        return config;
+                    }
+                });
+            } catch (Throwable ignored) {
+                // One unreadable accessor must not hide the rest.
+            }
+        }
+        if (getters == 0) {
+            H.miss(rule, "no getXxxConfig() accessor on AdOrangeConfig");
+            return;
+        }
+        H.hooked(rule, getters + " getXxxConfig accessors observed; every no-arg boolean switch on the"
+                + " returned config -> false");
+    }
+
+    /** 在一个配置对象上把所有无参 boolean 方法置 false，每个方法只挂一次。 */
+    private static void armConfigSwitches(MainHook module, Object config, String label) {
+        final String rule = "youku_ad_switch";
+        Class<?> owner = config.getClass();
+        Method[] declared;
+        try {
+            declared = owner.getDeclaredMethods();
+        } catch (Throwable ignored) {
+            return;
+        }
+        for (Method switchMethod : declared) {
+            if (switchMethod.getParameterTypes().length != 0) continue;
+            if (switchMethod.getReturnType() != boolean.class) continue;
+            if (java.lang.reflect.Modifier.isAbstract(switchMethod.getModifiers())) continue;
+            final String key = owner.getName() + "#" + switchMethod.getName();
+            if (AD_SWITCH_ARMED.putIfAbsent(key, Boolean.TRUE) != null) continue;
+            final String where = label + "." + switchMethod.getName() + "()";
+            try {
+                switchMethod.setAccessible(true);
+                module.hook(switchMethod).setId("youku_adswitch_" + where).intercept(
+                        new XposedInterface.Hooker() {
+                            @Override public Object intercept(XposedInterface.Chain chain) {
+                                H.hit(rule, where + " -> false", AD_SWITCH_HIT);
+                                return Boolean.FALSE;
+                            }
+                        });
+            } catch (Throwable ignored) {
+                // Not armable on this build; the other switches still apply.
+            }
+        }
+    }
+
     private static void installPauseAdGate(MainHook module, ClassLoader loader) {
         final String rule = "youku_pause_ad";
         Class<?> orange;
