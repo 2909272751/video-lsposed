@@ -189,7 +189,7 @@ public final class MainHook extends XposedModule {
                 @Override public void onActivityStarted(android.app.Activity a) { }
                 @Override public void onActivityResumed(final android.app.Activity a) {
                     try {
-                        YoukuRules.onActivityResumed(a, settings);
+                        YoukuRules.onActivityResumed(a, settings, "callbacks");
                     } catch (Throwable error) {
                         H.warn("event=ui_lifecycle_error " + H.describe(error));
                     }

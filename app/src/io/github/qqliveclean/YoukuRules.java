@@ -231,7 +231,7 @@ final class YoukuRules {
                                         + " hierarchy=" + describeHierarchy(activity.getClass()));
                             }
                             if (chain.getArg(0) instanceof Activity) {
-                                onActivityResumed((Activity) chain.getArg(0), settings);
+                                onActivityResumed((Activity) chain.getArg(0), settings, "anchor");
                             }
                             return result;
                         }
@@ -281,7 +281,7 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                                 + " activity=" + activity.getClass().getName()
                                 + " hierarchy=" + describeHierarchy(activity.getClass()));
                     }
-                    onActivityResumed(activity, settings);
+                    onActivityResumed(activity, settings, "reflection");
                 }
             }, delay);
         }
@@ -346,7 +346,28 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * of delayed passes, never a poll: views that arrive late are covered by 0.5 s / 3 s / 6 s, which
      * is what the home carousel and the channel row need.
      */
-    static void onActivityResumed(Activity activity, Config.Settings settings) {
+    /**
+     * Which driver produced the current UI pass, appended to every hit line as {@code src=...}.
+     *
+     * <p>Three drivers exist - the app base class anchor, the registered lifecycle callbacks and the
+     * ActivityThread reflection driver - and all of them call this method. Which one actually fires
+     * varies between sessions, so a hit without a source cannot be attributed, and no driver can be
+     * chosen or deleted on evidence. Tagging turns "it worked" into "it worked because of this".
+     */
+    private static final java.util.concurrent.atomic.AtomicReference<String> CURRENT_SOURCE =
+            new java.util.concurrent.atomic.AtomicReference<String>("unknown");
+
+    private static String tag() {
+        return " src=" + CURRENT_SOURCE.get();
+    }
+
+    /**
+     * Entry point for the UI rules. Called by all three drivers; {@code source} records which one.
+     * Schedules a small fixed set of delayed passes, never a poll: views that arrive late are covered
+     * by 0.5 s / 3 s / 6 s, which is what the home carousel and the channel row need.
+     */
+    static void onActivityResumed(Activity activity, Config.Settings settings, String source) {
+        CURRENT_SOURCE.set(source == null ? "unknown" : source);
         if (activity == null || settings == null) return;
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
                 || !settings.youkuShowGoodMovies;
@@ -412,7 +433,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                     card.setLayoutParams(params);
                     card.setVisibility(View.GONE);
                     lastTopCard = new WeakReference<View>(card);
-                    H.hit("youku_home_top_ad", "home carousel card collapsed", HOME_TOP_AD_HIT);
+                    H.hit("youku_home_top_ad", "home carousel card collapsed" + tag(), HOME_TOP_AD_HIT);
                     return;
                 }
                 card = parent;
@@ -433,7 +454,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             if (!settings.youkuShowVip) { bar.getChildAt(2).setVisibility(View.GONE); removed++; }
             if (!settings.youkuShowGoodMovies) { bar.getChildAt(3).setVisibility(View.GONE); removed++; }
             lastTabBar = new WeakReference<ViewGroup>(bar);
-            if (removed > 0) H.hit("youku_tab_filter", "hidden=" + removed + " from five-button bar", TAB_FILTER_HIT);
+            if (removed > 0) H.hit("youku_tab_filter", "hidden=" + removed + " from five-button bar" + tag(), TAB_FILTER_HIT);
         } catch (Throwable error) { H.warn("event=youku_tab_filter_runtime_error " + H.describe(error)); }
     }
 
@@ -636,7 +657,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             }
             lastChannelBar = new WeakReference<ViewGroup>(bar);
             if (removed > 0)
-                H.hit("youku_channel_filter", "hidden=" + removed + " from channel row [" + hiddenNames + "]",
+                H.hit("youku_channel_filter", "hidden=" + removed + " from channel row [" + hiddenNames + "]" + tag(),
                         CHANNEL_FILTER_HIT);
         } catch (Throwable error) {
             H.warn("event=youku_channel_filter_runtime_error " + H.describe(error));
