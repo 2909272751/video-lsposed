@@ -283,6 +283,15 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     // Wrapped because round 27's catch only covered the MainHook call site and
                     // nothing caught here: a throw after the first line left no trace at all.
                     try {
+                        // The detail page never got its 500 ms pass even though the 3 s and 6 s
+                        // ones on the same handler ran, so its tree is sampled from this driver
+                        // instead - it ticks reliably and resolves whatever is in front.
+                        if (settings.debugLog) dumpViewTreeOnce(activity);
+                    } catch (Throwable error) {
+                        H.info("event=youku_viewtree_tick_threw tick=" + delay
+                                + "ms error=" + H.describe(error));
+                    }
+                    try {
                         onActivityResumed(activity, settings, "reflection");
                     } catch (Throwable error) {
                         H.info("event=ui_pass_threw source=reflection"
@@ -291,6 +300,22 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     }
                 }
             }, delay);
+        }
+        // The countdown ad is on screen long after the last pass: it runs for up to 110 seconds.
+        // These ticks only sample the tree, they never re-run the rules, so they stay cheap.
+        for (final int late : new int[] {20000, 30000, 45000, 70000}) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    Activity front = findLiveActivity(context);
+                    if (front == null || !settings.debugLog) return;
+                    try {
+                        dumpViewTreeOnce(front);
+                    } catch (Throwable error) {
+                        H.info("event=youku_viewtree_late_threw tick=" + late
+                                + "ms error=" + H.describe(error));
+                    }
+                }
+            }, late);
         }
 }
 
@@ -311,10 +336,9 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                 return fail("mActivities_not_a_map:" + activities.getClass().getName());
             java.util.Map<?, ?> map = (java.util.Map<?, ?>) activities;
             if (map.isEmpty()) return fail("map_empty");
-            // mActivities holds several Activities at once - splash, detail page, real feed - and
-            // the first non-finishing one is not necessarily the one showing anything. The dump
-            // proved it: that Activity's decor view had a single node. So score every candidate by
-            // how much view tree it actually holds and take the richest window.
+            // Neither "first" nor "last" in the map is reliable. Measured on 2 Oct: with a video open the
+            // detail page held 401 nodes against the feed's 167, and "last" still returned the
+            // feed. Richest window is the only signal that tracked what was actually on screen.
             Activity best = null;
             int bestNodes = -1;
             StringBuilder census = new StringBuilder();
@@ -326,10 +350,7 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                 if (candidate.isFinishing()) continue;
                 int nodes = decorNodes(candidate);
                 if (census.length() < 900) {
-                    // decorNodes already answers "has a window": it returns 0 without one, so
-                    // calling hasWindow() here would only duplicate what nodes==0 already says.
-                    census.append('|').append(candidate.getClass().getSimpleName())
-                            .append(":n").append(nodes);
+                    census.append('|').append(candidate.getClass().getSimpleName()).append(":n").append(nodes);
                 }
                 if (nodes > bestNodes) {
                     bestNodes = nodes;
@@ -339,8 +360,8 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
             if (best == null) return fail("no_live_activity");
             LAST_REFLECT_REASON.set("ok nodes=" + bestNodes);
             if (!CENSUS_LOGGED.compareAndSet(false, true)) {
-                H.info("event=ui_activity_census picked=" + best.getClass().getSimpleName()
-                        + " nodes=" + bestNodes + " all=" + census);
+                H.info("event=ui_activity_census picked=" + shortName(best) + " nodes=" + bestNodes
+                        + " all=" + census);
             }
             return best;
         } catch (Throwable error) {
@@ -389,6 +410,13 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     private static final java.util.concurrent.atomic.AtomicReference<String> CURRENT_SOURCE =
             new java.util.concurrent.atomic.AtomicReference<String>("unknown");
 
+    /** Simple class name, so diagnostic lines stay well under the per-record log ceiling. */
+    private static String shortName(Object value) {
+        if (value == null) return "null";
+        String name = value.getClass().getSimpleName();
+        return name == null || name.length() == 0 ? "anon" : name;
+    }
+
     private static String tag() {
         return " src=" + CURRENT_SOURCE.get();
     }
@@ -399,9 +427,12 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * by 0.5 s / 3 s / 6 s, which is what the home carousel and the channel row need.
      */
     static void onActivityResumed(Activity activity, Config.Settings settings, String source) {
-        H.info("event=ui_pass_firstline source=" + source + " activity="
-                + (activity == null ? "null" : activity.getClass().getName())
-                + " settings=" + (settings == null ? "null" : "ok"));
+        // Short class name only. Fully qualified names push these lines past the log writers per
+        // line ceiling, and a truncated record is indistinguishable from a missing one - which is
+        // exactly the ambiguity this round has to settle.
+        H.info("event=ui_first a=" + shortName(activity) + " s=" + (source == null ? "?" : source)
+                + " cfg=" + (settings == null ? "null" : "ok")
+                + " dbg=" + (settings == null ? "?" : String.valueOf(settings.debugLog)));
         CURRENT_SOURCE.set(source == null ? "unknown" : source);
         if (activity == null || settings == null) return;
         boolean filtering = !settings.youkuShowShortDrama || !settings.youkuShowVip
@@ -438,10 +469,8 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         // indistinguishable from a pass that never ran.
         handler.postDelayed(new Runnable() {
             @Override public void run() {
-                H.info("event=ui_pass_run offset=500ms src=" + CURRENT_SOURCE.get()
-                        + " activity=" + activity.getClass().getName()
-                        + " filtering=" + filtering + " blockAdSlot=" + settings.youkuBlockAdSlot
-                        + " hiddenChannels=" + settings.hiddenChannelNames.length);
+                H.info("event=ui_run t=500 a=" + shortName(activity) + " f=" + filtering
+                        + " ad=" + settings.youkuBlockAdSlot);
                 try {
                     if (filtering) filterBottomBar(activity, settings);
                     if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
@@ -607,7 +636,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         String name = activity.getClass().getName();
         Integer used = TREE_DUMPS.get(name);
         int count = used == null ? 0 : used.intValue();
-        if (count >= 2) return;
+        if (count >= 8) return;
         android.view.View root = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
         int nodes = decorNodes(activity);
         if (root == null || nodes < 30) {
@@ -616,6 +645,38 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         }
         TREE_DUMPS.put(name, count + 1);
         dumpViewTree(activity, "youku_viewtree");
+        dumpOverlayWindows(name);
+    }
+
+    /**
+     * Walks every window the app has added, not just the Activity's own decor view.
+     *
+     * <p>The countdown badge and the members-can-close-this pill never appeared in any Activity
+     * tree, across 593 sampled nodes, even while both were plainly on screen. That points at an
+     * overlay window owned by the player SDK rather than a view inside DetailActivity, so the
+     * Activity walk alone can never see them.
+     */
+    private static void dumpOverlayWindows(String tag) {
+        try {
+            Class<?> globalClass = Class.forName("android.view.WindowManagerGlobal", false,
+                    YoukuRules.class.getClassLoader());
+            Object global = R.find(globalClass, "getInstance", globalClass, new Class<?>[0]).invoke(null);
+            Object list = readField(R.findField(globalClass, "mViews"), global);
+            if (!(list instanceof java.util.List)) return;
+            android.content.res.Resources res = android.content.res.Resources.getSystem();
+            for (Object view : (java.util.List<?>) list) {
+                if (!(view instanceof View)) continue;
+                View root = (View) view;
+                int nodes = countNodes(root, new int[1]);
+                if (nodes < 5) continue;
+                StringBuilder out = new StringBuilder(1200);
+                walkToDepth(root, 0, 0, 6, res, out);
+                H.info("event=youku_window_windows tag=" + tag + " root=" + root.getClass().getSimpleName()
+                        + " nodes=" + nodes + " tree=" + out);
+            }
+        } catch (Throwable error) {
+            H.info("event=youku_window_windows_threw tag=" + tag + " error=" + H.describe(error));
+        }
     }
 
     /** Per-Activity-class dump counters, so the home feed no longer spends the detail page budget. */
