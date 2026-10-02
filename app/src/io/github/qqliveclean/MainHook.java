@@ -108,41 +108,60 @@ public final class MainHook extends XposedModule {
      * this and the two hooks arrives first wins and the others become no-ops.
      */
     /**
-     * Reads the running build's version straight out of the package, so a stale APK on the device
-     * can never again be mistaken for a logic bug in the logs.
+     * Logs the build's own identity. getImplementationVersion() returns 0.0 here, so the constant
+     * is the source of truth and is bumped by the same edit that bumps the manifest.
      */
     private static String versionName() {
-        try {
-            return MainHook.class.getPackage().getImplementationVersion();
-        } catch (Throwable unavailable) {
-            return "unknown";
-        }
+        return "qlc-0.3.52";
     }
 
     private void startContextRetry(final ClassLoader loader, final String target) {
         H.info("event=context_retry_entered target=" + target);
         Thread worker = new Thread(new Runnable() {
             @Override public void run() {
+                // An attempt counter alone cannot bound this: a single ContextFinder.find that
+                // blocks forever never reaches the next iteration, and catch (Throwable) cannot
+                // see a hang because nothing is thrown. The deadline is what guarantees the
+                // thread ends.
+                final long deadline = System.currentTimeMillis() + 30000L;
                 for (int attempt = 1; attempt <= 60; attempt++) {
+                    if (System.currentTimeMillis() > deadline) {
+                        H.warn("event=context_retry_deadline attempt=" + attempt);
+                        break;
+                    }
                     try {
                         Thread.sleep(500L);
                     } catch (InterruptedException stopped) {
                         H.warn("event=context_retry_interrupted attempt=" + attempt);
                         return;
                     }
+                    long began = System.currentTimeMillis();
                     Context found;
                     try {
                         found = ContextFinder.find(loader, target);
-                    } catch (Throwable ignored) {
+                    } catch (Throwable error) {
+                        H.info("event=context_retry_threw attempt=" + attempt
+                                + " " + H.describe(error));
                         continue;
                     }
-                    if (found == null) continue;
+                    long took = System.currentTimeMillis() - began;
+                    if (found == null) {
+                        // One line per attempt, so a slow find shows up as attempt N taking
+                        // too long rather than as a line that never arrived at all.
+                        H.info("event=context_retry_try attempt=" + attempt
+                                + " found=0 took=" + took + "ms");
+                        continue;
+                    }
                     H.info("event=context_retry_hit attempt=" + attempt
-                            + " source=" + ContextFinder.lastSource());
+                            + " took=" + took + "ms source=" + ContextFinder.lastSource());
                     configure(found, loader, target);
                     return;
                 }
-                H.warn("event=context_retry_exhausted attempts=60");
+                // Whatever happened - exhausted, deadline, or a find that never returned - the
+                // rules should still be installed. configure() is CAS-guarded, so if a hook won
+                // the race while this was polling, this call is a no-op.
+                H.warn("event=context_retry_fallback_configure");
+                configure(null, loader, target);
             }
         }, "qlc-context-retry");
         worker.setDaemon(true);
