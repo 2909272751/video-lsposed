@@ -2841,3 +2841,43 @@ UI 才是受支持的方式。
 | `youku_mine_*` / `mine_banner_*` / `push_notify` | `feature=matched`，已装上，未遇到真实触发 |
 
 **没有一条是「实现不存在」。** 与前几轮删掉的探针性质完全不同。
+
+## 六十六、第 70 轮：缓存优先级**被证实**——上一轮是怀疑，这轮是证据
+
+### 这次改对了方式
+
+上一轮 `sed` 失败，这轮用「拉下来 → 本地改 → 推回去 → 修 owner/mode」，**写确实生效了**：
+
+```
+设备实测：<boolean name="reduce_preload" value="true" />
+```
+
+### 但功能报告依然说关着
+
+```
+feature=reduce_preload result=off
+config_source=remote_preferences
+config_source=target_cache[ok]
+```
+
+**两个来源都报告「已加载」，但读取链里靠前的那个说了算。**
+
+上一轮我写「直接改文件是动一个活缓存，下次同步可能被覆盖，**这是错的杠杆**」——
+**这轮证实了**：不是「可能被覆盖」，是**根本不生效**，
+因为 `Config` 的读取顺序里 RemotePreferences 在 cache 之前。
+
+> 如果当时凭「文件显示 true」就宣布搞定了，
+> 下一轮复现不出来——**那就是又一次「看起来成功」**。
+
+### 已把文件恢复原状
+
+```
+reduce_preload = false
+```
+
+**不留任何与实际设置不一致的状态。**
+
+### 结论落定
+
+**`reduce_preload` 不是坏的，也不是死代码——它实现了、接线正确、只是在上游被关掉了。**
+真要开，**走模块设置 UI**（写的是 RemotePreferences），这轮把「知道」和「猜」区分开了。
