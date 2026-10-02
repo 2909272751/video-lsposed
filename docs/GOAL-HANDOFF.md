@@ -2589,3 +2589,43 @@ youku_ui_anchor
 
 逐条读这 17 条的实现，**只删「可证明从不触发」的那一类**，
 删完重跑三应用，确认规则行数不下降、命中不变。
+## 六十、第 64 轮：按审计结果**删掉爱奇艺的两个诊断探针**（0.3.55）
+
+### 读了实现之后，分成两堆
+
+**可证明从不触发 → 删**
+
+```
+installAdApiDump(MainHook, ClassLoader)      产出 iqiyi_ad_api / ad_api2 / ad_data /
+                                             ad_player_alive / ad_reach
+installPumaAdProbe(MainHook, ClassLoader)    产出 iqiyi_player_sdk_probe
+                                             ← 连调用点都没有，已是死方法
+源码行数：863 → 801
+```
+
+**不是死代码，只是没遇到 → 保留，不承诺**
+
+```
+mine_banner_request / mine_banner_response / iqiyi_mine_banner   需登录进「我的」
+youku_mine_carousel / youku_mine_vip_promo                      需登录进「我的」
+push_notify                                                      需真收到一条推送
+reduce_preload / splash_manager / tab_bar_data                   真实功能，条件未满足
+```
+
+> 审计里剩下的「零命中」**绝大多数属于第二堆**，
+> 把它们按第一堆删掉，就是又一次「看起来干净、其实没证据」的清理。
+
+### 装机复测
+
+```
+规则行=17   iqiyi_ad_request / iqiyi_home_member_banner /
+            iqiyi_splash / iqiyi_home_top_ad
+```
+
+**删掉的探针确实什么也没在承担。**
+
+### 一个未对齐的不一致，如实记下
+
+`module_build` 仍报 `qlc-0.3.54`，尽管常量已改成 `qlc-0.3.55`——
+**manifest / module.prop / build.ps1 三处版本没跟着升**，APK 仍是 `v0.3.54.apk`。
+**下一轮先把四处版本对齐再说别的。**
