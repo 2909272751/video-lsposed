@@ -52,7 +52,6 @@ final class IqiyiRules {
                         // 11/25/57/103/107s countdowns all captured with these rules active), so
                         // they are reported as withdrawn rather than as working gates: a row that
                         // says "matched" must not be read as "ads are blocked".
-                        installAdApiDump(module, loader);
                         installAdRequestGate(module, loader);
         } else {
             H.skipped("iqiyi_ad_request", "disabled in settings");
@@ -134,18 +133,6 @@ final class IqiyiRules {
      * 对得上——靠再猜一次没有意义。把真机上的形状读出来，才能一眼看出哪个方法才是活的入口，
      * 也让下一次改版后的重新定位有据可依。
      */
-    private static void installAdApiDump(MainHook module, ClassLoader loader) {
-        final String rule = "iqiyi_ad_api";
-        try {
-            Class<?> puma = R.load(loader, "com.mcto.player.mctoplayer.PumaPlayer");
-            H.hooked(rule, "PumaPlayer: " + signature(puma, "On"));
-            H.hooked("iqiyi_ad_api2", "AdsClient: " + signature(
-                    R.load(loader, "com.mcto.ads.AdsClient"), "request"));
-        } catch (Throwable error) {
-            H.miss(rule, H.describe(error));
-        }
-    }
-
     /**
      * 广告请求闸门，挂在 {@code com.mcto.ads.AdsClient} 上。
      *
@@ -340,55 +327,6 @@ final class IqiyiRules {
         }
         return out.length() == 0 ? "(none)" : out.toString();
     }
-
-    private static void installPumaAdProbe(MainHook module, ClassLoader loader) {
-        final String rule = "iqiyi_ad_player";
-        try {
-            Class<?> puma = R.load(loader, "com.mcto.player.mctoplayer.PumaPlayer");
-            // Dump the runtime shape once. Repeated static anchor guessing has been wrong every
-            // time on 17.9.2: the ad decision sits behind native, and every "obvious" Java entry
-            // point turns out to be off the live path. Reading the real signatures off the device
-            // is the only way to stop guessing.
-            H.hooked("iqiyi_ad_api", "PumaPlayer: " + signature(puma, "On"));
-            H.hooked("iqiyi_ad_api2", "AdsClient: " + signature(
-                    R.load(loader, "com.mcto.ads.AdsClient"), "request"));
-            Method prepared = R.find(puma, "OnAdPrepared", void.class);
-            Method callback = R.find(puma, "OnAdCallback", void.class, int.class, String.class);
-            if (prepared == null && callback == null) {
-                H.miss(rule, "PumaPlayer ad callbacks not found; void(): " + R.describeCandidates(puma, void.class));
-                return;
-            }
-            StringBuilder armed = new StringBuilder();
-            if (prepared != null) {
-                module.hook(prepared).setId("iqiyi_puma_ad_prepared").intercept(new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        if (PUMA_AD_ONCE.compareAndSet(false, true)) {
-                            H.hit("iqiyi_ad_player_alive", "OnAdPrepared fired: ad reached the player", PUMA_AD_ONCE);
-                        }
-                        H.hit(rule, "ad prepared on PumaPlayer", PUMA_AD_HIT);
-                        return chain.proceed();
-                    }
-                });
-                armed.append("OnAdPrepared; ");
-            }
-            if (callback != null) {
-                module.hook(callback).setId("iqiyi_puma_ad_callback").intercept(new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        if (PUMA_AD_ONCE.compareAndSet(false, true)) {
-                            H.hit("iqiyi_ad_player_alive", "OnAdCallback fired: ad reached the player", PUMA_AD_ONCE);
-                        }
-                        H.hit(rule, "ad callback on PumaPlayer", PUMA_AD_HIT);
-                        return chain.proceed();
-                    }
-                });
-                armed.append("OnAdCallback; ");
-            }
-            H.hooked(rule, "PumaPlayer ad path observed: " + armed);
-        } catch (Throwable error) {
-            H.miss(rule, H.describe(error));
-        }
-    }
-
     /**
      * 直接把播放器广告配置上的策略字段清零。
      *
