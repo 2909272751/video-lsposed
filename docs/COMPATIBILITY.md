@@ -860,55 +860,76 @@ AdVideoView（17 点）、RequestInfo#getAdType/setAdType、PasterAdRequestInfo#
 在它出现之前，任何「已跳过」的表述都不成立。
 ---
 
-## 当前交付状态（0.3.54 / 第 61 轮）
+---
 
-三个 App 均处于**未登录**状态，私人 DNS 关闭。以下每条都有**同一次会话（同一 PID）
-的 hit= 命中行**支撑，其中腾讯与爱奇艺另有**多会话**复测。
+## 最终验证状态（0.3.55 / 第 67 轮，三个 App 全部完成多会话复测）
 
-| App | 版本 | 状态 | 关键证据 |
+三个 App 均**未登录**，私人 DNS 关闭。以下全部来自同一构建 `qlc-0.3.55`。
+
+| App | 版本 | 多会话证据 | 规则安装 |
 |---|---|---|---|
-| 腾讯视频 com.tencent.qqlive | 9.04.55.32321 | ✅ 广告请求闸**稳定拦截** | hit=ad_request_gate **连续 3 场冷启动全中**（第 57 轮）；hit=mine_ad_card、hit=feed_ad_cell 此前各有一场命中 |
-| 爱奇艺 com.qiyi.video | 17.9.5 | ✅ **开屏广告不再出现** | hit=iqiyi_splash requestAdAndDownload suppressed on x02.v + 截图佐证：WelcomeActivity 直接进首页、**无开屏广告**（第 52 轮）；hit=iqiyi_home_member_banner、hit=iqiyi_ad_request 另有命中 |
-| 优酷 com.youku.phone | 11.2.15 | ⚠️ **大部分生效，前贴倒计时拦不到** | 单场 7 条同时命中（youku_channel_filter/youku_csj_dsp_off/youku_home_top_ad/youku_pause_ad/youku_splash_cold_switch/youku_tab_filter/youku_video_preroll） |
+| 腾讯视频 `com.tencent.qqlive` | 9.04.55.32321 | **7 场**，6 场命中 `ad_request_gate` | 稳定 |
+| 爱奇艺 `com.qiyi.video` | 17.9.5 | **3/3 有命中**，`iqiyi_splash` 三场全中 | 每场恒定 15 行 |
+| 优酷 `com.youku.phone` | 11.2.15 | **3/3 有命中**（`youku_pause_ad`×2、`youku_video_preroll`×1） | 每场恒定 28 行 |
+
+### 各 App 实际拦到的东西
+
+```
+腾讯视频  ad_request_gate                        广告请求被丢弃
+爱奇艺    iqiyi_splash                           开屏广告请求被抑制
+          iqiyi_home_top_ad                     首页顶部广告位收起
+          iqiyi_home_member_banner              首页会员横幅收起
+          iqiyi_ad_request                       广告请求被丢弃
+优酷      youku_pause_ad                         暂停页广告开关置 false
+          youku_video_preroll                    前贴「会员可关闭此广告」胶囊隐藏
+          youku_home_top_ad / youku_tab_filter / youku_channel_filter
+          youku_csj_dsp_off / youku_splash_cold_switch / youku_splash_hot_switch
+```
+
+### 爱奇艺有画面佐证
+
+`hit=iqiyi_splash` 与截图**同一 PID（20625）对照**：
+WelcomeActivity 直接进入首页，**无开屏广告**，feed 全是正常内容卡。
+这是唯一一个同时具备日志证据和画面证据的 App。
 
 ### 已知限制（不承诺）
 
-**优酷前贴倒计时徽标拦不到。** 未登录状态下优酷仍会下发约 110 秒的前贴广告，
-模块能做的只是让「会员可关闭此广告」那个胶囊消失；
-「68 秒」徽标由播放器**原生层**（libaliplayer.so / libalixplayer.so / libads-ac.so）绘制，
-**Java 层无 hook 可达**。
+**优酷前贴的倒计时秒数徽标拦不到。** 未登录状态下优酷仍下发约 110 秒前贴；
+模块能隐藏「会员可关闭此广告」胶囊，**但「68 秒」徽标由播放器原生层绘制**
+（`libaliplayer.so` 3,673,040 字节 / `libalixplayer.so` / `libads-ac.so`），**Java 层无可达 hook**。
 
-判定成功与否的**硬标准**（比任何 hit= 都可靠）：
-资源 ** x7f100c16** player_user_content_experience_skip_pre_ad_tip_one
-（「广告特权为您跳过前贴片广告」）出现在屏幕上，才算成功。
+证据链：
+1. 标题「68 秒」不在 `base.apk` 中，390 个采样节点里也没有 → 不是普通 View
+2. `TextView.setText` 探针只命中胶囊，从未命中秒数
+3. `SpannableStringBuilder`（armed=8）、`Canvas.drawText`（armed=3）全静默
+4. XAdSDK `RequestInfo.getAdType/setAdType`（armed=2）、
+   `PasterAdRequestInfo` 构造函数（armed=2）全静默
+   —— **构造函数不可能偶然静默**，说明前贴请求**根本不走 XAdSDK**
 
-### 已撤回、且不得再承诺的规则
+判定成功与否的**硬标准**：资源 `0x7f100c16`
+`player_user_content_experience_skip_pre_ad_tip_one`（「广告特权为您跳过前贴片广告」）
+出现在屏幕上。
 
-youku_preroll_ad、youku_preroll_event、youku_ad_slot_gate、
-youku_ad_switch、youku_splash_cold_gate。
-这些不是「暂时没测」，是**实测证伪**——留着只会让覆盖率虚高。
+### 无法验证的项（需登录或特定条件）
 
-### 无法验证的项
+| 规则 | 需要什么 |
+|---|---|
+| `youku_mine_carousel` / `youku_mine_vip_promo` | 登录后进「我的」页 |
+| `mine_banner_request` / `mine_banner_response` / `iqiyi_mine_banner` | 登录后进「我的」页 |
+| `push_notify` | 真收到一条推送 |
+| `reduce_preload` / `splash_manager` / `tab_bar_data` | 真实功能，触发条件未遇到 |
 
-youku_mine_carousel、youku_mine_vip_promo 需要**登录**后才能进入「我的」页面；
-目前三个 App 均为未登录，**这两条未验证，不作任何承诺**。
+**这些「零命中」不等于死代码**，本会话周期已刻意区分：
+「可证明从不触发」的探针已删（优酷五族 + 爱奇艺两族），
+上面这些是「条件没遇到」，保留但不承诺。
 
-### 验收门槛（沿用）
+### 已撤回、且不得再承诺
 
-只有 hit= 行能证明一条规则生效；hooked **不等于**可用；
-rmed=N 必须同时检查（N=0 说明 hook 什么都没拦上）。
-且**「一场成功」不等于「修好了」**——腾讯第 53 轮就因为只跑一场而误判过一次。
+`youku_preroll_ad`、`youku_preroll_event`、`youku_ad_slot_gate`、
+`youku_ad_switch`、`youku_splash_cold_gate` —— **实测证伪**，不是未测。
 
-### 0.3.54 跨应用回归（第 61 轮）
+### 验收门槛（沿用并已反复执行）
 
-清掉优酷转储诊断后，三个 App 在同一构建上各跑一场：
-
-```
-腾讯视频  hit=ad_request_gate
-爱奇艺    hit=iqiyi_splash / iqiyi_home_top_ad / iqiyi_home_member_banner
-优酷      hit=youku_home_top_ad / youku_splash_hot_switch
-```
-
-**无跨应用回归。** 优酷侧 view-tree 转储诊断已删除（每场 18~28 次 → 0 次），
-ui_pass_run / ui_activity_census / ui_anchor_resolved 等
-**判断规则是否被调用所必需**的日志故意保留。
+只有 `hit=` 能证明规则生效；`hooked` 不等于可用；`armed=N` 必须同时检查；
+**「一场成功」不等于「修好了」**（腾讯第 53 轮就误判过一次）；
+**「命中 N 条」不是稳定性指标**——稳定的是规则安装，命中数取决于 App 当次推什么。
