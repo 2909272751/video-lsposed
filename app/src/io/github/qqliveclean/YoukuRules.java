@@ -142,6 +142,8 @@ final class YoukuRules {
         installPreRollProbe(module, loader);
         installPreRollTextRule(module, loader);
         installCountdownTextProbe(module, loader);
+        installEditableCountdownProbe(module, loader);
+        installCanvasCountdownProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -1457,6 +1459,132 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             grandparent.setVisibility(android.view.View.GONE);
         }
     }
+
+    /**
+     * Looks for the countdown number where a ticking counter actually writes it.
+ *
+     * <p>Round 46 proved it does not arrive through setText: across a full playback the members
+     * hint was blanked but the 68-second badge stayed on screen, and the \d{1,3}\s*秒 branch of
+     * looksLikeCountdown never matched once. A live countdown that is not re-set is almost
+     * certainly written into an Editable in place, so both the replace and append families are
+     * watched here.
+     */
+    private static void installEditableCountdownProbe(MainHook module, ClassLoader loader) {
+        String[][] probes = {
+            {"android.text.SpannableStringBuilder", "replace", "3"},
+            {"android.text.SpannableStringBuilder", "append", "1"},
+            {"android.text.SpannableStringBuilder", "append", "2"},
+            {"android.text.SpannableStringBuilder", "insert", "3"},
+        };
+        int armed = 0;
+        for (String[] probe : probes) {
+            Class<?> owner;
+            try {
+                owner = R.load(loader, probe[0]);
+            } catch (Throwable missing) {
+                H.info("rule=youku_countdown_editable status=miss " + probe[0] + " " + H.describe(missing));
+                return;
+            }
+            for (Method method : owner.getDeclaredMethods()) {
+                if (!method.getName().equals(probe[1])) continue;
+                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
+                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
+                try {
+                    hookEditableWrite(module, method);
+                    armed++;
+                } catch (Throwable error) {
+                    H.info("rule=youku_countdown_editable status=miss " + probe[1] + " "
+                            + H.describe(error));
+                }
+            }
+        }
+        H.info("rule=youku_countdown_editable status=hooked armed=" + armed);
+    }
+
+    private static void hookEditableWrite(MainHook module, Method method) throws Throwable {
+        module.hook(method).setId("youku_countdown_editable_" + method.getName()).intercept(
+                new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                        try {
+                            for (int index = 0; index < chain.getArgs().size(); index++) {
+                                Object value = chain.getArg(index);
+                                if (value instanceof CharSequence && looksLikeCountdown(value.toString())) {
+                                    H.hit("youku_countdown_editable",
+                                            method.getName() + "[" + index + "]=" + value,
+                                            EDIBLE_SEEN);
+                                }
+                            }
+                        } catch (Throwable ignored) {
+                            // diagnostics must never break the app
+                        }
+                        return chain.proceed();
+                    }
+                });
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean EDIBLE_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Last resort for the countdown: is it drawn rather than set?
+     *
+     * <p>Round 47 armed eight SpannableStringBuilder write methods and none fired, and round 46
+     * already cleared setText. A custom View drawing the badge in onDraw is the remaining
+     * explanation, and Canvas.drawText is where that becomes observable.
+     */
+    private static void installCanvasCountdownProbe(MainHook module, ClassLoader loader) {
+        String[][] probes = {
+            {"android.graphics.Canvas", "drawText", "4"},
+            {"android.graphics.Canvas", "drawText", "5"},
+            {"android.graphics.Canvas", "drawText", "6"},
+        };
+        int armed = 0;
+        for (String[] probe : probes) {
+            Class<?> owner;
+            try {
+                owner = R.load(loader, probe[0]);
+            } catch (Throwable missing) {
+                H.info("rule=youku_countdown_canvas status=miss " + H.describe(missing));
+                return;
+            }
+            for (Method method : owner.getDeclaredMethods()) {
+                if (!method.getName().equals(probe[1])) continue;
+                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
+                // drawText takes String as well as CharSequence, so the test has to ask
+                // whether the parameter can hold one - asking whether CharSequence can be
+                // assigned to it silently drops every String overload and arms nothing.
+                if (!CharSequence.class.isAssignableFrom(method.getParameterTypes()[0])) continue;
+                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
+                try {
+                    hookCanvasText(module, method);
+                    armed++;
+                } catch (Throwable error) {
+                    H.info("rule=youku_countdown_canvas status=miss " + H.describe(error));
+                }
+            }
+        }
+        H.info("rule=youku_countdown_canvas status=hooked armed=" + armed);
+    }
+
+    private static void hookCanvasText(MainHook module, Method method) throws Throwable {
+        module.hook(method).setId("youku_countdown_canvas").intercept(
+                new XposedInterface.Hooker() {
+                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                        try {
+                            Object value = chain.getArg(0);
+                            if (value instanceof CharSequence && looksLikeCountdown(value.toString())) {
+                                H.hit("youku_countdown_canvas", "drawText=" + value, CANVAS_SEEN);
+                            }
+                        } catch (Throwable ignored) {
+                            // diagnostics must never break the app
+                        }
+                        return chain.proceed();
+                    }
+                });
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean CANVAS_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** One dedupe flag per countdown label, so a ticking counter does not flood the log. */
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> COUNTDOWN_SEEN =
