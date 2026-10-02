@@ -3112,3 +3112,25 @@ feature=reduce_preload  这行整个消失了
 ```
 
 **广告拦截行为毫无变化——这正是重点：回退恢复的就是先前已验证的状态。**
+
+## 七十二、第 76 轮：**交付构建 0.3.57 上三个 App 全部复验**
+
+回退 `reduce_preload` 后出了 0.3.57。**新装机必须复验**，这是纪律，不看「只改了一行默认值」。
+
+```
+腾讯   模块行=41  规则行=2   hit=ad_request_gate
+爱奇艺 模块行=82  规则行=15  hit=iqiyi_splash / iqiyi_home_top_ad / iqiyi_home_member_banner
+优酷   模块行=249 规则行=28  hit=youku_cjs_dsp_off / youku_splash_cold_switch /
+                             youku_tab_filter / youku_channel_filter / youku_pause_ad
+```
+
+**三个 App 全部命中，规则行数与此前恒定值完全一致（优酷 28、爱奇艺 15）。**
+**回退没有引入任何回归。**
+
+### 累计证据（截至 0.3.57）
+
+| App | 场次 | 命中场次 |
+|---|---|---|
+| 腾讯视频 | 8 | 7 |
+| 爱奇艺 | 4 | 4 |
+| 优酷 | 4 | 4 |

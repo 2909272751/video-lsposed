@@ -862,15 +862,15 @@ AdVideoView（17 点）、RequestInfo#getAdType/setAdType、PasterAdRequestInfo#
 
 ---
 
-## 最终验证状态（0.3.55 / 第 67 轮，三个 App 全部完成多会话复测）
+## 最终验证状态（0.3.57 / 交付构建，三个 App 全部复验）
 
 三个 App 均**未登录**，私人 DNS 关闭。以下全部来自同一构建 `qlc-0.3.55`。
 
 | App | 版本 | 多会话证据 | 规则安装 |
 |---|---|---|---|
-| 腾讯视频 `com.tencent.qqlive` | 9.04.55.32321 | **7 场**，6 场命中 `ad_request_gate` | 稳定 |
-| 爱奇艺 `com.qiyi.video` | 17.9.5 | **3/3 有命中**，`iqiyi_splash` 三场全中 | 每场恒定 15 行 |
-| 优酷 `com.youku.phone` | 11.2.15 | **3/3 有命中**（`youku_pause_ad`×2、`youku_video_preroll`×1） | 每场恒定 28 行 |
+| 腾讯视频 `com.tencent.qqlive` | 9.04.55.32321 | **8 场**，7 场命中 `ad_request_gate`；0.3.57 复验命中 | 稳定 |
+| 爱奇艺 `com.qiyi.video` | 17.9.5 | **4 场**全有命中；0.3.57 复验命中 `iqiyi_splash` + 两个首页 banner | 每场恒定 15 行 |
+| 优酷 `com.youku.phone` | 11.2.15 | **4 场**全有命中；0.3.57 单场命中 5 条 `youku_*` 规则 | 每场恒定 28 行 |
 
 ### 各 App 实际拦到的东西
 
