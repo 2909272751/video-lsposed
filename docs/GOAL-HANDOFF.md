@@ -3134,3 +3134,38 @@ feature=reduce_preload  这行整个消失了
 | 腾讯视频 | 8 | 7 |
 | 爱奇艺 | 4 | 4 |
 | 优酷 | 4 | 4 |
+
+## 七十三、第 77 轮：**爱奇艺播放器广告位闸门复活**——撤回理由是关于旧版本的判断
+
+### 起因
+
+用户问「还有没有办法再找优酷爱奇艺的视频广告方法」。查代码时发现三条规则是
+`H.skipped(... "withdrawn on 17.9.2 ...")`——**它们是在 17.9.2 上撤下的**，
+而手机现在跑 **17.9.5**。
+
+> **「在旧版本上从不执行」是关于那个版本的事实，不是关于这条规则的属性。**
+> 版本已经变了，这个判断就该重测。
+
+### 重新武装后的结果（0.3.58）
+
+```
+rule=iqiyi_player_ads status=hooked  QYPlayerADConfig.checkRegister gate; blocked slots mask=0xdefe
+rule=iqiyi_ad_policy  status=hooked  QYPlayerADConfig ad policy fields zeroed on getDefault()
+hit=iqiyi_player_ads                      ← 触发
+```
+
+**四场连打，4/4 命中。** `checkRegister` 在 17.9.5 上**确实会执行**。
+
+`mask=0xdefe` = 除 bit0 与 bit13 外全部置位；`C_SLOT_TYPE_PRE_ROLL=2` 在其中，
+**即前贴广告位在注册阶段就被拒绝**——发生在原生 Cupid SDK（`libgdtqjs.so`）
+拿到广告位**之前**，所以这一步是 Java 能够到的最上游。
+
+### 画面佐证
+
+播放页**直接进内容**：无「秒」徽标、无「广告」标签、无摇一摇框。
+对照组优酷同位置仍有「58 秒」徽标 + 游戏广告画面。
+
+### 关键结论
+
+**撤回规则不等于规则失效。** 撤回理由必须区分是
+「在 X 版本上不触发」还是「原理上不可达」——**前者版本一变就该重测**。
