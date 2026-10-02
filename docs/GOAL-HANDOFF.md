@@ -2008,3 +2008,43 @@ hit=youku_home_top_ad home carousel card collapsed src=reflection
 前贴这条线已经投入太多轮且全部落空，**建议降级为「已知限制」**，
 把精力转向仍然可验证的项：三个 App 的**多会话复测**（确认非偶发），
 以及清理脚手架（installResumeProbes / egisterUiLifecycle / dumpLiveActivities 等）。
+## 四十七、第 51 轮：拆掉 420 行死探针；**爱奇艺在新会话复测命中**
+
+### 按 skill「简洁优先/省电」清理
+
+优酷前贴的**五族探针已使命完成，全部删除**，只保留真正起作用的
+installPreRollTextRule（拦 pill）。
+
+```
+删除：installPreRollProbe（17 个点）、installCountdownTextProbe、
+      installEditableCountdownProbe（armed=8）、installCanvasCountdownProbe（armed=3）、
+      installAdSlotTypeProbe（armed=2）、installPasterRequestProbe（armed=2）
+源码行数：1887 → 1465（约 -420 行）
+模块日志行数：254 → 143
+```
+
+理由写在代码里：**留着「已证明从不触发」的 hook 只会耗电，
+并让覆盖率看起来比实际更广**——这正是已经害我撤回两条规则的失败形态。
+同时把 looksLikeCountdown 的秒数分支删掉（它从未匹配，只增加每次 setText 的正则开销），
+并把规则注释改准：**它只管 pill，不管徽标**。
+
+### 爱奇艺跨会话复测（本场新会话）
+
+```
+hit=iqiyi_ad_request ad request dropped (3-arg)
+hit=iqiyi_home_member_banner top membership banner collapsed
+hit=iqiyi_mcto_reach live: com.mcto.player.mctoplayer.PumaPlayer
+```
+
+**三条都命中**，说明这些不是单场偶发。
+注意 iqiyi_splash 本场未命中——开屏是被 iqiyi_ad_request 拦掉的，
+两者是不同的规则，**不要混为一谈**。
+
+**但本场截图拍到的是桌面，不是爱奇艺**，所以
+**这一轮只有日志证据，没有画面佐证**。按纪律，画面结论要等下一场补。
+
+### 下一轮
+
+1. **补爱奇艺的画面佐证**（同 PID 命中行 + 首页/开屏截图）。
+2. 腾讯视频同样做一次跨会话复测。
+3. 优酷前贴维持「已知限制」，不再投入。
