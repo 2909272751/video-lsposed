@@ -1712,3 +1712,53 @@ hit=youku_countdown_text label=会员可关闭此广告
 2. **验收改为画面证据**：倒计时徽标消失，且出现资源  x7f100c16
    「已为您跳过前贴片广告」提示——后者才是「跳过成功」的硬证明。
 3. 顺带把 youku_home_top_ad 收尾（esult=matched 但没隐藏）。
+## 四十一、第 45 轮：youku_video_preroll 已写出，但**遇到一个必须先查清的日志异常**
+
+### 代码已就位
+
+新增 installPreRollTextRule()，在 TextView.setText(CharSequence) 上：
+
+1. looksLikeCountdown() 命中时，H.hit("youku_video_preroll", ...)
+2. hideCountdownRow()：把接收者的父容器 setVisibility(GONE)（子节点≤6 时再上一级），
+   **连「39 秒」数字徽标一起带走**——只清文字会留下一个孤零零的数字
+3. chain.proceed(new Object[]{""}) 置空白文案
+
+并保留了 installCountdownTextProbe() 作为对照（同一处 setText，只记不打）。
+
+**API 要点（纠正自己之前的两次编译错误）**：
+- 拿接收者是 chain.getThisObject()，**不是** chain.thisObject()，
+  也不是 Hooker 自身的 getThisObject()
+- 改参数是 chain.proceed(Object[] args)
+- H.hit(rule, detail, AtomicBoolean)——第三个参数是 AtomicBoolean 去重键，不是任意对象
+
+### 本轮卡住的异常（**未查清，不猜**）
+
+本场日志里**一条 ule=youku_* 的注册行都没有**：
+
+```
+rule= 前缀只有两个：rule=push_notify、rule=youku_splash_cold_switch
+（而后者只出现在 :channel 子进程那 2 行里）
+```
+
+上一场（0.3.41）明明有 youku_preroll_probe status=hooked。
+
+**已排除的可能**：
+- 不是抛异常中断：MainHook.java:392 的 YoukuRules.install() 之后的
+  scheduleUiPasses()（397 行）**确实执行了**——日志里 ui_pass_run / ui_driver /
+  ui_activity_census 都在。若 install() 抛出，397 行到不了。
+- 不是模块没加载：主进程 tag 1884 有 173 行。
+- 不是日志文件缺失：设备上只有 modules_2026-10-02T09-01-33 这一个文件，主进程 09:02:28 启动。
+- event=configure_skipped reason=already_configured 出现，说明**之前已有一轮配置**，
+  但 install() 是无条件调用的，不能解释注册行消失。
+
+**未解**：安装期的日志去了哪里。**不猜**——下一轮第一件事是查这个。
+
+### 第 46 轮的作业
+
+1. **先查安装期日志消失的原因**：建议在 install() 首行加一条 H.info("event=youku_install_begin")，
+   在 MainHook:392 后加一条 event=youku_install_done，
+   用这两条把「install 进没进 / 走没走完」钉死，再回头找注册行为何消失。
+2. 顺带考虑：**诊断日志太多**（本场 youku_viewtree 31 条、ui_pass_run 18 条、
+   youku_window_windows 10 条，共 173 行里大半是采样），
+   既费电又淹没关键行，建议按 skill 规范收一收。
+3. 规则本身待验证：倒计时徽标消失，且出现资源  x7f100c16「已为您跳过前贴片广告」。
