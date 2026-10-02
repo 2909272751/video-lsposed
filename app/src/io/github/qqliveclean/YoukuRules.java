@@ -139,13 +139,19 @@ final class YoukuRules {
         // ---- A-3: read-only pre-roll control points ----
         // The probe stays: it is the only thing that will produce evidence the day
         // Youku does serve video-side ad material, and it costs nothing at runtime.
-        installPreRollProbe(module, loader);
+        // ---- A-3: pre-roll countdown ----
+        // Only the rule stays. Five probe families were armed here to locate the badge and all
+        // five returned nothing across full playbacks: setText (armed, hits only the members
+        // pill), SpannableStringBuilder replace/append/insert (armed=8), Canvas.drawText
+        // (armed=3), RequestInfo getAdType/setAdType (armed=2) and the PasterAdRequestInfo
+        // constructor (armed=2). A constructor cannot stay silent by accident, so the pre-roll
+        // request does not run through XAdSDK at all. The badge is drawn by the player native
+        // layer and is out of reach from here.
+        //
+        // Keeping hooks that provably never fire costs battery and makes coverage look broader
+        // than it is - the failure shape that has already produced two withdrawn rules. They are
+        // removed rather than left armed. The findings stay in docs/COMPATIBILITY.md.
         installPreRollTextRule(module, loader);
-        installCountdownTextProbe(module, loader);
-        installEditableCountdownProbe(module, loader);
-        installCanvasCountdownProbe(module, loader);
-        installAdSlotTypeProbe(module, loader);
-        installPasterRequestProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -1310,91 +1316,8 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         }
     }
 
-    // ------------------------------------------------------------------ P-1
-
     /**
-     * The pause-ad enable flag is the field {@code AdPauseFullScreenPlugin.r0}, assigned once in
-     * {@code onStart()} from
-     * {@code OrangeConfigImpl.a("ad_fullscreen_pause", "isEnable", "true")}.
-     *
-     * <p>Why the config read and not the field: libxposed API 102 as shipped here only exposes
-     * {@code hook(Executable)} (see the API stub), so there is no field hook to install; and
-     * hooking {@code onStart()} to return early would skip the WHOLE pause plugin, not just its
-     * ads. Answering the app's own config read with {@code "false"} is the same value the app
-     * itself would see if the server turned the placement off, so the plugin keeps running and
-     * only its own {@code r0} gate closes.
-     *
-     * <p>Scope: the intercept only reacts to that exact group+key pair and otherwise proceeds
-     * untouched. Cost: two {@code String.equals} on an init-time config read (45 call sites
-     * app-wide, all lifecycle/init handlers - verified with the call-graph index), no
-     * allocation, no reflection.
-     */
-    /**
-     * A-3：前贴控制点的<b>只读</b>探针。
-     *
-     * <p>为什么需要它：截图抓不到视频 Surface（播放器停在画中画时主窗口就是全黑），
-     * 所以「有没有前贴」不能靠肉眼判断，只能靠 logcat 里的 HLS 播放状态
-     * （{@code DOWNLOADER_LOG ... playback state updated, source:pulse, buffer_in_ms:N}）。
-     * 而前七次尝试都是「猜一个锚点，挂上，看有没有命中」——猜错了连方向都看不出来。
-     *
-     * <p>所以这里反向做：把 11.2.15 里<b>所有未混淆的前贴控制点</b>一次性挂上只读探针，
-     * 每个方法被调用就打一行。这样一次播放就能回答「前贴的控制链到底经过哪几个方法」，
-     * 下一轮直接照着命中名单挂闸门，不必再猜。
-     *
-     * <p>全部只读（{@code chain.proceed()} 原样放行），不影响任何行为。
-     */
-    /**
-     * Logs any label that looks like the countdown, wherever it is rendered.
-     *
-     * <p>All 17 named pre-roll probes hooked successfully and never fired once while the ad was
-     * plainly playing, and 390 sampled nodes plus every window in the process contained no such
-     * label. Rather than keep guessing class names in a 124 MB obfuscated APK, this watches the one
-     * place the text has to pass through if it is a View at all. A hit proves it is a View and hands
-     * over the real class; silence settles the question just as firmly.
-     */
-    private static void installCountdownTextProbe(MainHook module, ClassLoader loader) {
-        try {
-            Class<?> textView = R.load(loader, "android.widget.TextView");
-            Method setText = null;
-            for (Method method : textView.getDeclaredMethods()) {
-                if (!"setText".equals(method.getName())) continue;
-                if (method.getParameterTypes().length != 1) continue;
-                if (!method.getParameterTypes()[0].isAssignableFrom(CharSequence.class)) continue;
-                setText = method;
-                break;
-            }
-            if (setText == null) { H.info("rule=youku_countdown_text status=miss no_setText"); return; }
-            module.hook(setText).setId("youku_countdown_text").intercept(
-                    new XposedInterface.Hooker() {
-                        @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                            try {
-                                Object value = chain.getArg(0);
-                                if (value instanceof CharSequence) {
-                                    String text = value.toString();
-                                    if (looksLikeCountdown(text)) {
-                                        java.util.concurrent.atomic.AtomicBoolean seen =
-                                                COUNTDOWN_SEEN.get(text);
-                                        if (seen == null) {
-                                            seen = new java.util.concurrent.atomic.AtomicBoolean(false);
-                                            COUNTDOWN_SEEN.put(text, seen);
-                                        }
-                                        H.hit("youku_countdown_text", "label=" + text, seen);
-                                    }
-                                }
-                            } catch (Throwable ignored) {
-                                // diagnostics must never break the app
-                            }
-                            return chain.proceed();
-                        }
-                    });
-            H.info("rule=youku_countdown_text status=hooked setText(CharSequence)");
-        } catch (Throwable error) {
-            H.info("rule=youku_countdown_text status=miss " + H.describe(error));
-        }
-    }
-
-    /**
- * Removes the pre-roll countdown: the seconds badge and the members-can-close-this pill.
+     * Removes the members-can-close-this pill that sits over the pre-roll.
  *
  * <p>The label is proven to arrive through TextView.setText, so the receiver is known at the moment
  * it matters. The label is blanked and its row is hidden, which takes the seconds badge with it -
@@ -1443,6 +1366,13 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         }
     }
 
+    /** True for the members hint, the skip label and the deeper-engagement marker. */
+    private static boolean looksLikeCountdown(String text) {
+        if (text == null || text.length() == 0 || text.length() > 40) return false;
+        return text.contains("可关闭此广告") || text.contains("深入广告")
+                || text.contains("跳过广告") || text.contains("前贴片广告");
+    }
+
     private static final java.util.concurrent.atomic.AtomicBoolean PRE_ROLL_SEEN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -1460,360 +1390,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                 && ((android.view.ViewGroup) grandparent).getChildCount() <= 6) {
             grandparent.setVisibility(android.view.View.GONE);
         }
-    }
-
-    /**
-     * Looks for the countdown number where a ticking counter actually writes it.
- *
-     * <p>Round 46 proved it does not arrive through setText: across a full playback the members
-     * hint was blanked but the 68-second badge stayed on screen, and the \d{1,3}\s*秒 branch of
-     * looksLikeCountdown never matched once. A live countdown that is not re-set is almost
-     * certainly written into an Editable in place, so both the replace and append families are
-     * watched here.
-     */
-    private static void installEditableCountdownProbe(MainHook module, ClassLoader loader) {
-        String[][] probes = {
-            {"android.text.SpannableStringBuilder", "replace", "3"},
-            {"android.text.SpannableStringBuilder", "append", "1"},
-            {"android.text.SpannableStringBuilder", "append", "2"},
-            {"android.text.SpannableStringBuilder", "insert", "3"},
-        };
-        int armed = 0;
-        for (String[] probe : probes) {
-            Class<?> owner;
-            try {
-                owner = R.load(loader, probe[0]);
-            } catch (Throwable missing) {
-                H.info("rule=youku_countdown_editable status=miss " + probe[0] + " " + H.describe(missing));
-                return;
-            }
-            for (Method method : owner.getDeclaredMethods()) {
-                if (!method.getName().equals(probe[1])) continue;
-                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
-                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
-                try {
-                    hookEditableWrite(module, method);
-                    armed++;
-                } catch (Throwable error) {
-                    H.info("rule=youku_countdown_editable status=miss " + probe[1] + " "
-                            + H.describe(error));
-                }
-            }
-        }
-        H.info("rule=youku_countdown_editable status=hooked armed=" + armed);
-    }
-
-    private static void hookEditableWrite(MainHook module, Method method) throws Throwable {
-        module.hook(method).setId("youku_countdown_editable_" + method.getName()).intercept(
-                new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        try {
-                            for (int index = 0; index < chain.getArgs().size(); index++) {
-                                Object value = chain.getArg(index);
-                                if (value instanceof CharSequence && looksLikeCountdown(value.toString())) {
-                                    H.hit("youku_countdown_editable",
-                                            method.getName() + "[" + index + "]=" + value,
-                                            EDIBLE_SEEN);
-                                }
-                            }
-                        } catch (Throwable ignored) {
-                            // diagnostics must never break the app
-                        }
-                        return chain.proceed();
-                    }
-                });
-    }
-
-    private static final java.util.concurrent.atomic.AtomicBoolean EDIBLE_SEEN =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-
-    /**
-     * Last resort for the countdown: is it drawn rather than set?
-     *
-     * <p>Round 47 armed eight SpannableStringBuilder write methods and none fired, and round 46
-     * already cleared setText. A custom View drawing the badge in onDraw is the remaining
-     * explanation, and Canvas.drawText is where that becomes observable.
-     */
-    private static void installCanvasCountdownProbe(MainHook module, ClassLoader loader) {
-        String[][] probes = {
-            {"android.graphics.Canvas", "drawText", "4"},
-            {"android.graphics.Canvas", "drawText", "5"},
-            {"android.graphics.Canvas", "drawText", "6"},
-        };
-        int armed = 0;
-        for (String[] probe : probes) {
-            Class<?> owner;
-            try {
-                owner = R.load(loader, probe[0]);
-            } catch (Throwable missing) {
-                H.info("rule=youku_countdown_canvas status=miss " + H.describe(missing));
-                return;
-            }
-            for (Method method : owner.getDeclaredMethods()) {
-                if (!method.getName().equals(probe[1])) continue;
-                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
-                // drawText takes String as well as CharSequence, so the test has to ask
-                // whether the parameter can hold one - asking whether CharSequence can be
-                // assigned to it silently drops every String overload and arms nothing.
-                if (!CharSequence.class.isAssignableFrom(method.getParameterTypes()[0])) continue;
-                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
-                try {
-                    hookCanvasText(module, method);
-                    armed++;
-                } catch (Throwable error) {
-                    H.info("rule=youku_countdown_canvas status=miss " + H.describe(error));
-                }
-            }
-        }
-        H.info("rule=youku_countdown_canvas status=hooked armed=" + armed);
-    }
-
-    private static void hookCanvasText(MainHook module, Method method) throws Throwable {
-        module.hook(method).setId("youku_countdown_canvas").intercept(
-                new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        try {
-                            Object value = chain.getArg(0);
-                            if (value instanceof CharSequence && looksLikeCountdown(value.toString())) {
-                                H.hit("youku_countdown_canvas", "drawText=" + value, CANVAS_SEEN);
-                            }
-                        } catch (Throwable ignored) {
-                            // diagnostics must never break the app
-                        }
-                        return chain.proceed();
-                    }
-                });
-    }
-
-    private static final java.util.concurrent.atomic.AtomicBoolean CANVAS_SEEN =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-
-    /**
-     * Reads the ad slot type off the request the SDK is about to build.
-     *
-     * <p>The countdown badge is drawn by the player native layer, so nothing in the view tree can
-     * stop it. The remaining lever is upstream: no ad requested means no ad drawn. XAdSDK keeps one
-     * request class per slot - PasterAdRequestInfo, PopAdRequestInfo, SplashAdRequestInfo,
-     * PauseAdRequestInfo - all extending RequestInfo, which carries the slot as an int in mAdType.
-     * This only reads that value; nothing is blocked until the real numbers are known, because
-     * guessing which int means pre-roll is exactly the mistake the withdrawn rules made.
-     */
-    private static void installAdSlotTypeProbe(MainHook module, ClassLoader loader) {
-        try {
-            Class<?> requestInfo = R.load(loader, "com.alimm.xadsdk.request.builder.RequestInfo");
-            int armed = 0;
-            for (Method method : requestInfo.getDeclaredMethods()) {
-                String name = method.getName();
-                if (!"getAdType".equals(name) && !"setAdType".equals(name)) continue;
-                if (method.getParameterTypes().length > 1) continue;
-                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) continue;
-                try {
-                    module.hook(method).setId("youku_ad_slot_type_" + name).intercept(
-                            new XposedInterface.Hooker() {
-                                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                                    try {
-                                        Object self = chain.getThisObject();
-                                        String kind = self == null ? "null"
-                                                : self.getClass().getSimpleName();
-                                        String value = null;
-                                        if (method.getParameterTypes().length == 0) {
-                                            Object got = chain.proceed();
-                                            value = String.valueOf(got);
-                                            H.hit("youku_ad_slot_type", kind + ".getAdType=" + value,
-                                                    SLOT_TYPE_SEEN);
-                                            return got;
-                                        }
-                                        value = String.valueOf(chain.getArg(0));
-                                        H.hit("youku_ad_slot_type", kind + ".setAdType=" + value,
-                                                SLOT_TYPE_SEEN);
-                                    } catch (Throwable ignored) {
-                                        // diagnostics must never break the app
-                                    }
-                                    return chain.proceed();
-                                }
-                            });
-                    armed++;
-                } catch (Throwable error) {
-                    H.info("rule=youku_ad_slot_type status=miss " + H.describe(error));
-                }
-            }
-            H.info("rule=youku_ad_slot_type status=hooked armed=" + armed);
-        } catch (Throwable error) {
-            H.info("rule=youku_ad_slot_type status=miss " + H.describe(error));
-        }
-    }
-
-    private static final java.util.concurrent.atomic.AtomicBoolean SLOT_TYPE_SEEN =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-
-    /**
-     * Watches the pre-roll request being built.
-     *
-     * <p>Round 48 found the SDK: com.alimm.xadsdk keeps one request class per slot, and
-     * PasterAdRequestInfo is the pre-roll. Its accessors never fire because R8 renamed them, so
-     * this hooks the constructor instead - constructing a pre-roll request has to new the class, so
-     * a hit here is proof the pre-roll runs through this chain, and silence means it does not.
-     * Read-only on purpose: the slot value is still unknown, and intercepting before it is known is
-     * how the earlier rules blocked nothing while reporting hooked.
-     */
-    private static void installPasterRequestProbe(MainHook module, ClassLoader loader) {
-        String[] targets = {
-            "com.alimm.xadsdk.request.builder.PasterAdRequestInfo",
-            "com.alimm.xadsdk.request.builder.PlayerAdRequestInfo",
-        };
-        int armed = 0;
-        for (String target : targets) {
-            Class<?> owner;
-            try {
-                owner = R.load(loader, target);
-            } catch (Throwable missing) {
-                H.info("rule=youku_paster_request status=miss " + target + " " + H.describe(missing));
-                continue;
-            }
-            for (java.lang.reflect.Constructor<?> ctor : owner.getDeclaredConstructors()) {
-                if (java.lang.reflect.Modifier.isAbstract(ctor.getModifiers())) continue;
-                try {
-                    final int argCount = ctor.getParameterTypes().length;
-                    module.hook(ctor).setId("youku_paster_request").intercept(
-                            new XposedInterface.Hooker() {
-                                @Override public Object intercept(XposedInterface.Chain chain)
-                                        throws Throwable {
-                                    H.hit("youku_paster_request",
-                                            target.substring(target.lastIndexOf('.') + 1)
-                                                    + "<init>/" + argCount,
-                                            PASTER_SEEN);
-                                    return chain.proceed();
-                                }
-                            });
-                    armed++;
-                } catch (Throwable error) {
-                    H.info("rule=youku_paster_request status=miss " + H.describe(error));
-                }
-            }
-        }
-        H.info("rule=youku_paster_request status=hooked armed=" + armed);
-    }
-
-    private static final java.util.concurrent.atomic.AtomicBoolean PASTER_SEEN =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
-
-    /** One dedupe flag per countdown label, so a ticking counter does not flood the log. */
-    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> COUNTDOWN_SEEN =
-            java.util.Collections.synchronizedMap(
-                    new java.util.HashMap<String, java.util.concurrent.atomic.AtomicBoolean>());
-
-    /** True for the countdown pill, the members hint and the deeper-engagement marker. */
-    private static boolean looksLikeCountdown(String text) {
-        if (text == null || text.length() == 0 || text.length() > 40) return false;
-        return text.contains("可关闭此广告") || text.contains("深入广告")
-                || text.contains("跳过广告") || text.contains("前贴片广告")
-                || text.matches(".*\\d{1,3}\\s*秒.*");
-    }
-
-    private static void installPreRollProbe(MainHook module, ClassLoader loader) {
-        String[][] probes = {
-            // class, method, params-count
-            {"com.youku.alixplayer.system.AndroidPlayer", "initPreAdDuration", "0"},
-            {"com.youku.alixplayer.system.AndroidPlayer", "getAdCountDown", "0"},
-            {"com.youku.player.plugins.playercore.PlayerCorePlugin", "skipPreAd", "1"},
-            {"com.youku.player2.live.LivePlayerView", "onPreAdStart", "1"},
-            {"com.youku.player2.live.LivePlayerView", "onPreAdEnd", "1"},
-            {"com.youku.player.plugins.multiscreen.MultiScreenPlugin", "isFocusPreAd", "0"},
-            // The XAdSDK ad video view. The five points above are pre-roll-specific and
-            // were never reached during playback; this one sits on the path of ANY ad
-            // video, whatever its slot, so it answers the prior question directly -
-            // "was an ad served at all, and of which type". setAdType's int value is
-            // the slot id, which is the first hard number for the pre-roll slot.
-            {"com.youku.xadsdk.ui.component.AdVideoView", "setAdType", "1"},
-            {"com.youku.xadsdk.ui.component.AdVideoView", "setVideoSource", "1"},
-            {"com.youku.xadsdk.ui.component.AdVideoView", "onPrepared", "0"},
-            {"com.youku.xadsdk.ui.component.AdVideoView", "onStart", "0"},
-            {"com.youku.xadsdk.ui.component.AdVideoView", "onComplete", "0"},
-            {"com.youku.xadsdk.ui.component.AdVideoView", "setOpVideoInfo", "1"},
-            // Youku ships a SECOND, identical AdVideoView of its own, in a different
-            // dex (player2.plugin.interact.view is classes2.dex, the SDK one is
-            // classes5.dex). Which one renders a pre-roll is not knowable offline,
-            // and covering only one of them would let "no hits" mean "watched the
-            // wrong class" rather than "no ad was served". Same method names, so the
-            // two copies are told apart by the fully qualified name.
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "setAdType", "1"},
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "setVideoSource", "1"},
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "onPrepared", "0"},
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "onStart", "0"},
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "onComplete", "0"},
-            {"com.youku.player2.plugin.interact.view.AdVideoView", "setOpVideoInfo", "1"},
-        };
-        int armed = 0;
-        StringBuilder seen = new StringBuilder();
-        // Swallowing a load failure looks identical to "the method was never called",
-        // and those two mean opposite things. Record why a probe did not arm.
-        StringBuilder notArmed = new StringBuilder();
-        for (String[] probe : probes) {
-            Class<?> owner;
-            try {
-                owner = R.load(loader, probe[0]);
-            } catch (Throwable missing) {
-                if (notArmed.length() > 0) notArmed.append("; ");
-                notArmed.append(probe[1]).append(": ").append(missing);
-                continue;
-            }
-            for (Method method : owner.getDeclaredMethods()) {
-                if (!method.getName().equals(probe[1])) continue;
-                if (method.getParameterTypes().length != Integer.parseInt(probe[2])) continue;
-                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) break;
-                final String where = owner.getName() + "#" + method.getName();
-                try {
-                    module.hook(method).setId("youku_preroll_probe_" + where).intercept(
-                            new XposedInterface.Hooker() {
-                                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                                    Object a0 = null;
-                                    try {
-                                        a0 = chain.getArg(0);
-                                    } catch (Throwable noArgs) {
-                                        // no-arg probe methods have nothing to read
-                                    }
-                                    StringBuilder tail = new StringBuilder();
-                                    if (a0 instanceof Integer || a0 instanceof String) {
-                                        // setAdType(int) and setVideoSource(String) are the two
-                                        // calls that carry the ad's identity; without their values
-                                        // a hit only says "something happened", which is not enough
-                                        // to tell a pre-roll from a mid-roll.
-                                        tail.append(" arg0=").append(a0);
-                                    }
-                                    H.hit("youku_preroll_probe", where + "() reached" + tail,
-                                            probeFlag(where));
-                                    return chain.proceed();
-                                }
-                            });
-                    armed++;
-                    if (seen.length() > 0) seen.append(", ");
-                    seen.append(where);
-                    break;
-                } catch (Throwable hookFailed) {
-                    if (notArmed.length() > 0) notArmed.append("; ");
-                    notArmed.append(where).append(": ").append(hookFailed);
-                }
-            }
-        }
-        if (armed == 0) {
-            H.skipped("youku_preroll_probe", "no pre-roll control point resolved on 11.2.15");
-            return;
-        }
-        H.hooked("youku_preroll_probe", armed + " read-only pre-roll control points: " + seen
-                + (notArmed.length() == 0 ? "" : " | not armed: " + notArmed));
-    }
-
-    /** 前贴控制点探针：每个探针方法各打一次。H.hit 的 once 是按对象去重的，
-     *  六个探针共用一个标记只会记下第一个，必须按方法名各持一个。 */
-    private static AtomicBoolean probeFlag(String where) {
-        AtomicBoolean flag = PROBE_FLAGS.get(where);
-        if (flag != null) return flag;
-        AtomicBoolean created = new AtomicBoolean(false);
-        AtomicBoolean existing = PROBE_FLAGS.putIfAbsent(where, created);
-        return existing != null ? existing : created;
-    }
-
-    private static void installPauseAdGate(MainHook module, ClassLoader loader) {
+    }    private static void installPauseAdGate(MainHook module, ClassLoader loader) {
         final String rule = "youku_pause_ad";
         Class<?> orange;
         try {
