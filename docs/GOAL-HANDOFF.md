@@ -2881,3 +2881,45 @@ reduce_preload = false
 
 **`reduce_preload` 不是坏的，也不是死代码——它实现了、接线正确、只是在上游被关掉了。**
 真要开，**走模块设置 UI**（写的是 RemotePreferences），这轮把「知道」和「猜」区分开了。
+
+## 六十七、第 71 轮：设置界面跑通了，顺便发现 `reduce_preload` **根本没有 UI 开关**
+
+### 进界面的过程（记下来省下以后的轮次）
+
+手机进了睡眠，通知栏一直占着焦点，Activity 死活上不来。
+按记录里的完整序列走一遍才进去：
+
+```
+dumpsys deviceidle unforce → stay_on_while_plugged_in 7 → svc power stayon true
+→ input keyevent 26 ×2 → cmd statusbar collapse
+→ swipe 632 2200 → 632 500 → input text 258025 → keyevent 66
+→ 确认 mDreamingLockscreen=false
+```
+
+### 设置界面结构（`io.github.qqliveclean.MainActivity`）
+
+腾讯标签页上可见的开关：
+
+```
+拦截开屏广告 / 拦截播放广告 / 关闭首页片段自动播放
+隐藏首页顶部轮播 / 隐藏「我的」广告横幅
+通知：拦截推送通知广告
+诊断与恢复：记录详细日志 / 恢复默认设置
+```
+
+**`push_notify` 就是这里的一个正常开关**——和 `feature=matched` 对得上，
+规则活着是因为开关开着。
+
+### 关键发现：**没有预加载开关**
+
+整棵可见控件树里**找不到任何 preload 相关的开关**。
+
+**所以 `reduce_preload` 不是「谁在 UI 里忘了开」——它压根没有 UI。**
+要开它只有两条路：**改代码里的默认值**，或**直接写 RemotePreferences**。
+这**关掉了上一轮留下的那个问号**。
+
+### 顺带
+
+**设置 UI 这条路是通的、受支持的**。
+剩下那些「`matched` 但没触发」的规则，
+等条件真的出现时（收到一条真推送、或登录态）就能正经实测。
