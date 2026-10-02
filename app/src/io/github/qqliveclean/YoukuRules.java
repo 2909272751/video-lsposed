@@ -145,6 +145,7 @@ final class YoukuRules {
         installEditableCountdownProbe(module, loader);
         installCanvasCountdownProbe(module, loader);
         installAdSlotTypeProbe(module, loader);
+        installPasterRequestProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -1643,6 +1644,57 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean SLOT_TYPE_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Watches the pre-roll request being built.
+     *
+     * <p>Round 48 found the SDK: com.alimm.xadsdk keeps one request class per slot, and
+     * PasterAdRequestInfo is the pre-roll. Its accessors never fire because R8 renamed them, so
+     * this hooks the constructor instead - constructing a pre-roll request has to new the class, so
+     * a hit here is proof the pre-roll runs through this chain, and silence means it does not.
+     * Read-only on purpose: the slot value is still unknown, and intercepting before it is known is
+     * how the earlier rules blocked nothing while reporting hooked.
+     */
+    private static void installPasterRequestProbe(MainHook module, ClassLoader loader) {
+        String[] targets = {
+            "com.alimm.xadsdk.request.builder.PasterAdRequestInfo",
+            "com.alimm.xadsdk.request.builder.PlayerAdRequestInfo",
+        };
+        int armed = 0;
+        for (String target : targets) {
+            Class<?> owner;
+            try {
+                owner = R.load(loader, target);
+            } catch (Throwable missing) {
+                H.info("rule=youku_paster_request status=miss " + target + " " + H.describe(missing));
+                continue;
+            }
+            for (java.lang.reflect.Constructor<?> ctor : owner.getDeclaredConstructors()) {
+                if (java.lang.reflect.Modifier.isAbstract(ctor.getModifiers())) continue;
+                try {
+                    final int argCount = ctor.getParameterTypes().length;
+                    module.hook(ctor).setId("youku_paster_request").intercept(
+                            new XposedInterface.Hooker() {
+                                @Override public Object intercept(XposedInterface.Chain chain)
+                                        throws Throwable {
+                                    H.hit("youku_paster_request",
+                                            target.substring(target.lastIndexOf('.') + 1)
+                                                    + "<init>/" + argCount,
+                                            PASTER_SEEN);
+                                    return chain.proceed();
+                                }
+                            });
+                    armed++;
+                } catch (Throwable error) {
+                    H.info("rule=youku_paster_request status=miss " + H.describe(error));
+                }
+            }
+        }
+        H.info("rule=youku_paster_request status=hooked armed=" + armed);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean PASTER_SEEN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** One dedupe flag per countdown label, so a ticking counter does not flood the log. */
