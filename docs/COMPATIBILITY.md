@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 腾讯视频 | 9.04.55.32321 | 广告请求闸 `ad_request_gate`、个人中心广告卡 `mine_ad_card`、信息流广告位 `feed_ad_cell`、自动播放、推送 | — |
 | 爱奇艺 | 17.9.5 | **开屏广告** `iqiyi_splash`、首页顶部广告 `iqiyi_home_top_ad` | 播放页前贴（原生层，需 VIP 与会员内容才复现） |
-| 优酷 | 11.2.15 | 暂停广告 `youku_pause_ad`、首页轮播卡 `youku_home_top_ad`、**顶部频道隐藏 `youku_channel_filter`**、底部标签隐藏 `youku_tab_filter`、开屏热开关 `youku_splash_hot_switch`、穿山甲 DSP 关闭 `youku_csj_dsp_off` | **视频内容侧前贴/中插**：当前账号（未登录、非会员）下优酷完全不下发广告物料，无法复现，故不承诺。`youku_mine_carousel` / `youku_mine_vip_promo` 未登录时无法进入其所在页面 |
+| 优酷 | 11.2.15 | 暂停广告 `youku_pause_ad`、首页轮播卡 `youku_home_top_ad`、**顶部频道隐藏 `youku_channel_filter`**、底部标签隐藏 `youku_tab_filter`、开屏热开关 `youku_splash_hot_switch`、穿山甲 DSP 关闭 `youku_csj_dsp_off` | **视频内容侧前贴/中插：未能拦截**（详见下节「优酷前贴」）。`youku_mine_carousel` / `youku_mine_vip_promo` 未登录时无法进入其所在页面 |
 
 复现某一行的方法见各 App 小节；**判断一条规则是否真的生效，只认日志里的 `hit=` 行**，
 `hooked` 只表示方法解析成功——本项目有多条「hooked 但从未被调用」的记录，其中两条已在 2026-10-01 撤下。
@@ -823,3 +823,38 @@ hit=youku_tab_filter     hidden=3 from five-button bar
 锚点本身仍从 `Instrumentation.callActivityOnResume` 换成了 `Activity.performCreate`：
 框架自己调用、App 无法替换，方向是对的，但**没有证据表明旧锚点曾失效**，
 不把这次更换算作修复。跨 4 个会话验证均正常（`hooked=11 miss=0`，无 miss）。
+## 优酷前贴：已能复现，但未能拦截（第 44~49 轮实测结论）
+
+**先更正一条旧结论**：本文档此前写「当前账号下优酷完全不下发广告物料，无法复现」。
+**这是错的**——未登录、非会员状态下优酷照播前贴，截图证据为
+**倒计时数字 + 「会员可关闭此广告」+ 「深入广告」标记**，倒计时长约 110 秒。
+
+### 拆成两个东西才对
+
+| 元素 | 承载方式 | 拦截结果 |
+|---|---|---|
+| 「会员可关闭此广告」提示 pill | 普通 View，走 TextView.setText | ✅ hit=youku_video_preroll，画面已消失 |
+| 「68 秒」倒计时徽标 | **播放器原生层绘制** | ❌ Java 层无法触及 |
+
+**净效果就是少了一个 pill，广告照播、倒计时照跑，不算「跳过前贴片」。**
+
+### 为什么徽标拦不到（三条 Java 路径全部零命中）
+
+```
+rule=youku_countdown_text    status=hooked    ← setText，只命中会员 pill，从不命中「N 秒」
+rule=youku_countdown_editable status=hooked armed=8   ← SpannableStringBuilder replace/append/insert
+rule=youku_countdown_canvas   status=hooked armed=3   ← Canvas.drawText 4/5/6 参
+```
+
+### 广告请求链路也不在 XAdSDK
+
+按类名猜锚点**连续四次全部落空**：
+AdVideoView（17 点）、RequestInfo#getAdType/setAdType、PasterAdRequestInfo#<init>
+——全部 rmed 但零命中。前贴请求**不经过 com.alimm.xadsdk**
+（构造器不可能沉默），而优酷自有链路已混淆。
+
+### 验收标准（下一轮的硬指标）
+
+规则做对了，屏幕上会出现资源  x7f100c16
+「广告特权为您跳过前贴片广告」——**这句话比日志 hit= 更硬**。
+在它出现之前，任何「已跳过」的表述都不成立。
