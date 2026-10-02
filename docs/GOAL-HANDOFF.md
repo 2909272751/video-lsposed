@@ -2264,3 +2264,55 @@ hit=ad_request_gate outgoing ad request suppressed -> requestId 0
 2. 专门确认轮询兜底是否真的会在「hook 也失败」时把规则装上
    （需要构造 hook 全部不触发的场景）。
 3. 优酷前贴维持「已知限制」。
+## 五十三、第 57 轮：hit=ad_request_gate **3/3 稳定**；**挂死的轮询线程已删除**
+
+### 多会话复测结果
+
+```
+轮1  新增43行   命中=ad_request_gate   重试=entered,started
+轮2  新增163行  命中=ad_request_gate   重试=entered,started
+轮3  新增43行   命中=ad_request_gate   重试=entered,started
+```
+
+**3/3 命中，不是偶发。** 腾讯的拦截有效性至此有了多会话证据。
+
+### 但这三次同时暴露：轮询线程**每次都挂死**
+
+每一场都有 context_retry_entered + context_retry_started，
+却**从来没有 context_retry_try 那一行**——
+说明 ContextFinder.find() **第一次调用就没返回**，
+连「每次尝试打一行」都打不出来，后面的墙钟截止检查自然也轮不到。
+
+**上一轮加的三项加固，本质上都没能约束它**，因为挂死发生在循环体的第一处。
+
+### 决定：删掉轮询线程
+
+既然两个 hook 本来就把活干完了（三场都装上了规则、都命中了），
+一条**永久挂死的后台线程**就是纯负担：占资源、扰运行时、还让人误以为有兜底。
+
+删掉 startContextRetry() 及其调用，改为一行
+event=context_retry_removed hooks_only=2，把「刻意不做轮询」写进日志，
+免得下一轮又有人以为它还在。
+
+### 删除后复测（本场）
+
+```
+hit=ad_request_gate                      ← 依旧命中
+event=module_build version=qlc-0.3.53    ← 版本自证终于有效
+残留 context_retry 行 = 0
+```
+
+### 顺带修掉一个隐蔽的构建坑
+
+Windows PowerShell 5.1 的 Set-Content -Encoding UTF8 **会写 BOM**，
+导致 javac 报 非法字符: '\ufeff'。已改为
+[IO.File]::WriteAllText(path, text, (New-Object Text.UTF8Encoding False))，
+并对本轮涉及的 5 个文件全部去 BOM。**下次改文件别再用 Set-Content -Encoding UTF8。**
+
+### 当前三 App 状态
+
+| App | 状态 |
+|---|---|
+| 腾讯视频 | ✅ hit=ad_request_gate **3/3 多会话稳定** |
+| 爱奇艺 | ✅ hit=iqiyi_splash + 画面佐证（无开屏广告） |
+| 优酷 | ✅ 暂停/开屏/DSP/标签/频道/首页轮播/ideo_preroll 均有命中；⚠️ **前贴倒计时徽标拦不到（已知限制）** |
