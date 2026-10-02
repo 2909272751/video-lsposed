@@ -136,6 +136,7 @@ final class YoukuRules {
         // The probe stays: it is the only thing that will produce evidence the day
         // Youku does serve video-side ad material, and it costs nothing at runtime.
         installPreRollProbe(module, loader);
+        installCountdownTextProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -1330,6 +1331,69 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      *
      * <p>全部只读（{@code chain.proceed()} 原样放行），不影响任何行为。
      */
+    /**
+     * Logs any label that looks like the countdown, wherever it is rendered.
+     *
+     * <p>All 17 named pre-roll probes hooked successfully and never fired once while the ad was
+     * plainly playing, and 390 sampled nodes plus every window in the process contained no such
+     * label. Rather than keep guessing class names in a 124 MB obfuscated APK, this watches the one
+     * place the text has to pass through if it is a View at all. A hit proves it is a View and hands
+     * over the real class; silence settles the question just as firmly.
+     */
+    private static void installCountdownTextProbe(MainHook module, ClassLoader loader) {
+        try {
+            Class<?> textView = R.load(loader, "android.widget.TextView");
+            Method setText = null;
+            for (Method method : textView.getDeclaredMethods()) {
+                if (!"setText".equals(method.getName())) continue;
+                if (method.getParameterTypes().length != 1) continue;
+                if (!method.getParameterTypes()[0].isAssignableFrom(CharSequence.class)) continue;
+                setText = method;
+                break;
+            }
+            if (setText == null) { H.info("rule=youku_countdown_text status=miss no_setText"); return; }
+            module.hook(setText).setId("youku_countdown_text").intercept(
+                    new XposedInterface.Hooker() {
+                        @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            try {
+                                Object value = chain.getArg(0);
+                                if (value instanceof CharSequence) {
+                                    String text = value.toString();
+                                    if (looksLikeCountdown(text)) {
+                                        java.util.concurrent.atomic.AtomicBoolean seen =
+                                                COUNTDOWN_SEEN.get(text);
+                                        if (seen == null) {
+                                            seen = new java.util.concurrent.atomic.AtomicBoolean(false);
+                                            COUNTDOWN_SEEN.put(text, seen);
+                                        }
+                                        H.hit("youku_countdown_text", "label=" + text, seen);
+                                    }
+                                }
+                            } catch (Throwable ignored) {
+                                // diagnostics must never break the app
+                            }
+                            return chain.proceed();
+                        }
+                    });
+            H.info("rule=youku_countdown_text status=hooked setText(CharSequence)");
+        } catch (Throwable error) {
+            H.info("rule=youku_countdown_text status=miss " + H.describe(error));
+        }
+    }
+
+    /** One dedupe flag per countdown label, so a ticking counter does not flood the log. */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicBoolean> COUNTDOWN_SEEN =
+            java.util.Collections.synchronizedMap(
+                    new java.util.HashMap<String, java.util.concurrent.atomic.AtomicBoolean>());
+
+    /** True for the countdown pill, the members hint and the deeper-engagement marker. */
+    private static boolean looksLikeCountdown(String text) {
+        if (text == null || text.length() == 0 || text.length() > 40) return false;
+        return text.contains("可关闭此广告") || text.contains("深入广告")
+                || text.contains("跳过广告") || text.contains("前贴片广告")
+                || text.matches(".*\\d{1,3}\\s*秒.*");
+    }
+
     private static void installPreRollProbe(MainHook module, ClassLoader loader) {
         String[][] probes = {
             // class, method, params-count
