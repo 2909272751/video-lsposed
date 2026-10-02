@@ -2794,3 +2794,50 @@ youku_ad_switch / youku_splash_cold_gate
 1. **改 `COMPATIBILITY.md` 的「无法验证」表**——上一轮那张表是错的，
    `youku_mine_*` / `mine_banner_*` / `iqiyi_mine_banner` / `push_notify` 属于「已装上、未触发」
 2. 把 `feature=` 报告和 `hit=` 并列为验收工具
+
+## 六十五、第 69 轮：那三条不是「条件没满足」，是**设置开关关着**
+
+### 顺藤摸到开关本体
+
+```
+if (settings.reducePreload) PreloadRules.install(this, loader);
+SplashRules.install(this, loader, settings.blockSplash, settings.blockSplashPreload);
+```
+
+设置存在目标 App 自己的沙盒里（root 可读）：
+
+```
+/data/user/0/com.youku.phone/shared_prefs/qqlive_clean_cache.xml
+
+  _synced              = true
+  block_splash         = true
+  block_splash_preload = true
+  reduce_preload       = false     ← 就是它
+```
+
+**`reduce_preload` 是实现了、接线了、单纯被开关关掉的。**
+这和「死代码」是两回事，也和「目标类根本没找到」是两回事。
+
+### 没做成的一步，如实说
+
+想用 `sed` 直接改这个文件，**因为 `adb su -c` 里的嵌套引号报了
+`no closing quote`，文件没改成，测试没跑成。**
+
+不再为此继续耗轮次。**位置和键名已经确定**，真要开，走模块设置 UI 才是对的路径。
+
+### 顺带暴露的优先级问题（值得记）
+
+`Config` 的读取顺序是 RemotePreferences → ConfigProvider → 本地 cache → 默认值，
+而 cache 带 `_synced` 标记。
+**直接改文件是在动一个活缓存，下次同步可能被覆盖**——这是错的杠杆。
+UI 才是受支持的方式。
+
+### 当前定位
+
+| 规则 | 真实状态 |
+|---|---|
+| `reduce_preload` | **已实现，被开关关闭**（`reduce_preload=false`） |
+| `splash_manager` / `tab_bar_data` | 受同类开关门控，待确认具体键 |
+| `youku_mine_*` / `mine_banner_*` / `push_notify` | `feature=matched`，已装上，未遇到真实触发 |
+
+**没有一条是「实现不存在」。** 与前几轮删掉的探针性质完全不同。
