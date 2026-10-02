@@ -1673,3 +1673,42 @@ $ grep -a -c 'pangle'              → 3
    「已为您跳过前贴片广告」提示（资源  x7f100c16），
    而不是只看日志 hit=。
 3. youku_home_top_ad 仍是独立的未完成项（esult=matched 但没隐藏）。
+## 四十、第 44 轮：**倒计时徽标抓到了——它确实是 View**，规则可以下手了
+
+### 先补一条本轮的旁证修正
+
+本轮日志里有 hit=youku_tab_filter hidden=3 from five-button bar src=callbacks，
+而截图上底栏确实只剩 2 个 tab。
+**第 40 轮我说「那两个 tab 是优酷原生布局、不是模块效果」，那次是因为那一场会话恰好 0 命中；
+本场有命中，所以那个说法不能推广到所有会话。** 纪律不变：
+**每一条「生效了」都必须绑定同一 PID 的 hit= 与截图，两者齐全才算。**
+
+### 关键结果
+
+不再猜类名，直接 hook 文字必经之路 TextView.setText(CharSequence)：
+
+```
+rule=youku_countdown_text status=hooked setText(CharSequence)
+hit=youku_countdown_text label=会员可关闭此广告
+```
+
+**「会员可关闭此广告」确实经由 TextView.setText 上屏。**
+
+### 这一下推翻了什么
+
+之前 390 个节点 + 8 个窗口都没找到它，我据此推断「不是 View、是 SDK 原生层」。
+**那个推断是错的**——它就是普通 View，只是：
+1. 文案由服务端下发，**不在 APK 里**（所以静态搜不到）；
+2. 出现的时点很晚（**20 秒以后**），而当时的采样预算被早期 tick 用光。
+
+> 教训：静态搜不到 + 树里看不到 **≠ 不是 View**。
+> 先穷尽「文字必经之路」这类运行时观测手段，再下结构性结论。
+
+### 第 45 轮的作业
+
+1. **写 youku_video_preroll**：在同一条 setText 上，把
+   会员可关闭此广告 / 跳过广告 / 前贴片广告 / 深入广告 置空或改成空串，
+   并把 \\d{1,3}秒 的倒计时数字一并拦下（记法：looksLikeCountdown 已就位）。
+2. **验收改为画面证据**：倒计时徽标消失，且出现资源  x7f100c16
+   「已为您跳过前贴片广告」提示——后者才是「跳过成功」的硬证明。
+3. 顺带把 youku_home_top_ad 收尾（esult=matched 但没隐藏）。
