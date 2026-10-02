@@ -82,6 +82,12 @@ public final class MainHook extends XposedModule {
                 return;
             }
             H.warn("event=context_probe_failed detail=" + ContextFinder.lastDetail());
+            // Tencent Video returned a null getInitialApplication() here, and neither fallback hook
+            // fired afterwards either - that whole session ran with zero rules installed, which is
+            // worse than any misfiring rule. Hooking for the Application is a bet on the app taking
+            // one particular path; polling does not care which path it takes. Bounded, off the main
+            // thread, and it gives up rather than spinning forever.
+            startContextRetry(loader, target);
             // Two independent fallbacks: whichever fires first configures (guarded by the
             // CONFIGURED CAS). Youku's activity hook never fires, so the Application hook is
             // needed there; Tencent Video/iQiyi are unaffected because one of them wins.
@@ -91,6 +97,42 @@ public final class MainHook extends XposedModule {
             configure(null, loader, target);
         } catch (Throwable error) {
             H.error("event=install_failed", error);
+        }
+    }
+
+    /**
+     * Polls for the app context until it exists. configure() is guarded by a CAS, so whichever of
+     * this and the two hooks arrives first wins and the others become no-ops.
+     */
+    private void startContextRetry(final ClassLoader loader, final String target) {
+        Thread worker = new Thread(new Runnable() {
+            @Override public void run() {
+                for (int attempt = 1; attempt <= 60; attempt++) {
+                    try {
+                        Thread.sleep(500L);
+                    } catch (InterruptedException stopped) {
+                        return;
+                    }
+                    Context found;
+                    try {
+                        found = ContextFinder.find(loader, target);
+                    } catch (Throwable ignored) {
+                        continue;
+                    }
+                    if (found == null) continue;
+                    H.info("event=context_retry_hit attempt=" + attempt
+                            + " source=" + ContextFinder.lastSource());
+                    configure(found, loader, target);
+                    return;
+                }
+                H.warn("event=context_retry_exhausted attempts=60");
+            }
+        }, "qlc-context-retry");
+        worker.setDaemon(true);
+        try {
+            worker.start();
+        } catch (Throwable error) {
+            H.warn("event=context_retry_start_failed " + H.describe(error));
         }
     }
 
