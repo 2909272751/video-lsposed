@@ -2316,3 +2316,38 @@ Windows PowerShell 5.1 的 Set-Content -Encoding UTF8 **会写 BOM**，
 | 腾讯视频 | ✅ hit=ad_request_gate **3/3 多会话稳定** |
 | 爱奇艺 | ✅ hit=iqiyi_splash + 画面佐证（无开屏广告） |
 | 优酷 | ✅ 暂停/开屏/DSP/标签/频道/首页轮播/ideo_preroll 均有命中；⚠️ **前贴倒计时徽标拦不到（已知限制）** |
+## 五十四、第 58 轮：清掉两处**只有定义、没有调用**的脚手架
+
+### 删了什么
+
+```
+installResumeProbes()   行754..800  （47 行，只有定义，从未被调用）
+dumpOverlayWindows()    行682..712  （31 行，同上）
+源码行数：1465 → 1387
+```
+
+TREE_DUMPED 这次**没删**——见下面的坑。
+
+### 踩到的坑，值得记下来
+
+第一次尝试时按「包含 TREE_DUMPED 这个字符串」去找它的声明，
+**匹配到的第一个是使用处而不是声明处**，
+于是向后找第一个 {，一路数括号，把 dumpViewTree 整段方法删掉了，
+编译直接报 找不到符号。
+
+**教训：按标识符删代码，必须先确认匹配到的是声明而不是引用。**
+我的补救是先按 TrimStart().StartsWith('private') 过滤，删不动再放宽。
+
+另外那次的向后扩行扫描还写出了**死循环**（空行时行首指针不前进），
+靠 job_kill 中止——文件没被写坏，git checkout -- 恢复即可。
+
+### 删除后复测：优酷 7 条规则照常命中
+
+```
+youku_channel_filter / youku_csj_dsp_off / youku_home_top_ad / youku_pause_ad /
+youku_splash_cold_switch / youku_tab_filter / youku_video_preroll
+module_build version=qlc-0.3.53
+```
+
+**清理没有副作用。** 至此优酷侧的死代码基本清空，
+egisterUiLifecycle / dumpLiveActivities 本来就已不存在。
