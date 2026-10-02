@@ -1,11 +1,11 @@
-﻿minApiVersion=101
+minApiVersion=101
 targetApiVersion=102
 staticScope=true
 exceptionMode=protective
 autoHotReload=false
 id=io.github.qqliveclean
 name=视频精简
-version=0.3.52
-versionCode=55
+version=0.3.53
+versionCode=56
 author=Codex
 description=腾讯视频、优酷、爱奇艺广告与界面精简；独立设置与逐项兼容报告

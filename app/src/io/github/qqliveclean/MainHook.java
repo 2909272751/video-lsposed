@@ -90,7 +90,11 @@ public final class MainHook extends XposedModule {
             // worse than any misfiring rule. Hooking for the Application is a bet on the app taking
             // one particular path; polling does not care which path it takes. Bounded, off the main
             // thread, and it gives up rather than spinning forever.
-            startContextRetry(loader, target);
+            // Polling was tried and removed. Three cold starts showed ContextFinder.find
+            // hanging on its very first call, so no attempt line, no deadline check and
+            // no fallback ever ran - the thread simply parked and leaked. Meanwhile both
+            // hooks did their job: hit=ad_request_gate landed in all three sessions.
+            // A permanently hung background thread costs battery and buys nothing, so it goes.            H.info("event=context_retry_removed hooks_only=2");
             // Two independent fallbacks: whichever fires first configures (guarded by the
             // CONFIGURED CAS). Youku's activity hook never fires, so the Application hook is
             // needed there; Tencent Video/iQiyi are unaffected because one of them wins.
@@ -112,65 +116,7 @@ public final class MainHook extends XposedModule {
      * is the source of truth and is bumped by the same edit that bumps the manifest.
      */
     private static String versionName() {
-        return "qlc-0.3.52";
-    }
-
-    private void startContextRetry(final ClassLoader loader, final String target) {
-        H.info("event=context_retry_entered target=" + target);
-        Thread worker = new Thread(new Runnable() {
-            @Override public void run() {
-                // An attempt counter alone cannot bound this: a single ContextFinder.find that
-                // blocks forever never reaches the next iteration, and catch (Throwable) cannot
-                // see a hang because nothing is thrown. The deadline is what guarantees the
-                // thread ends.
-                final long deadline = System.currentTimeMillis() + 30000L;
-                for (int attempt = 1; attempt <= 60; attempt++) {
-                    if (System.currentTimeMillis() > deadline) {
-                        H.warn("event=context_retry_deadline attempt=" + attempt);
-                        break;
-                    }
-                    try {
-                        Thread.sleep(500L);
-                    } catch (InterruptedException stopped) {
-                        H.warn("event=context_retry_interrupted attempt=" + attempt);
-                        return;
-                    }
-                    long began = System.currentTimeMillis();
-                    Context found;
-                    try {
-                        found = ContextFinder.find(loader, target);
-                    } catch (Throwable error) {
-                        H.info("event=context_retry_threw attempt=" + attempt
-                                + " " + H.describe(error));
-                        continue;
-                    }
-                    long took = System.currentTimeMillis() - began;
-                    if (found == null) {
-                        // One line per attempt, so a slow find shows up as attempt N taking
-                        // too long rather than as a line that never arrived at all.
-                        H.info("event=context_retry_try attempt=" + attempt
-                                + " found=0 took=" + took + "ms");
-                        continue;
-                    }
-                    H.info("event=context_retry_hit attempt=" + attempt
-                            + " took=" + took + "ms source=" + ContextFinder.lastSource());
-                    configure(found, loader, target);
-                    return;
-                }
-                // Whatever happened - exhausted, deadline, or a find that never returned - the
-                // rules should still be installed. configure() is CAS-guarded, so if a hook won
-                // the race while this was polling, this call is a no-op.
-                H.warn("event=context_retry_fallback_configure");
-                configure(null, loader, target);
-            }
-        }, "qlc-context-retry");
-        worker.setDaemon(true);
-        try {
-            worker.start();
-            H.info("event=context_retry_started");
-        } catch (Throwable error) {
-            H.warn("event=context_retry_start_failed " + H.describe(error));
-        }
+        return "qlc-0.3.53";
     }
 
     /**
