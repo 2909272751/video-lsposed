@@ -297,20 +297,10 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                         H.info("event=youku_ui_pass_entered anchor=ActivityThread.mActivities reflection"
                                 + " activity=" + activity.getClass().getName());
                     }
-                    // Wrapped because round 27's catch only covered the MainHook call site and
-                    // nothing caught here: a throw after the first line left no trace at all.
-                    try {
-                        // Early ticks only sample the home feed. Spending the detail page budget in
-                        // the first seconds left nothing for the 45 s and 70 s ticks, which are the
-                        // only ones that can see a running countdown ad.
-                        if (settings.debugLog
-                                && "com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
-                            dumpViewTreeOnce(activity);
-                        }
-                    } catch (Throwable error) {
-                        H.info("event=youku_viewtree_tick_threw tick=" + delay
-                                + "ms error=" + H.describe(error));
-                    }
+                    // The view-tree sampling that used to sit here is gone. It existed to find the
+                    // pre-roll countdown, that hunt ended with the badge located in the player
+                    // native layer, and it was firing eighteen to twenty-eight times a session and
+                    // burying the handful of hit lines that actually matter.
                     try {
                         onActivityResumed(activity, settings, "reflection");
                     } catch (Throwable error) {
@@ -320,25 +310,6 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     }
                 }
             }, delay);
-        }
-        // The countdown ad is on screen long after the last pass: it runs for up to 110 seconds.
-        // These ticks only sample the tree, they never re-run the rules, so they stay cheap.
-        // The countdown question is answered - the label arrives through setText - so the tree
-        // samples no longer earn their keep. Two late samples are enough to confirm a rule,
-        // and the skill asks for less battery and less noise than that costs.
-        for (final int late : new int[] {30000, 70000}) {
-            handler.postDelayed(new Runnable() {
-                @Override public void run() {
-                    Activity front = findLiveActivity(context);
-                    if (front == null || !settings.debugLog) return;
-                    try {
-                        dumpViewTreeOnce(front, true);
-                    } catch (Throwable error) {
-                        H.info("event=youku_viewtree_late_threw tick=" + late
-                                + "ms error=" + H.describe(error));
-                    }
-                }
-            }, late);
         }
 }
 
@@ -476,13 +447,13 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         if (!"com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
             handler.postDelayed(new Runnable() {
                 @Override public void run() {
-                    if (settings.debugLog) dumpViewTreeOnce(activity);
+                    
                 }
             }, 1500);
             for (final int offset : new int[] {4000, 8000, 12000, 16000}) {
                 handler.postDelayed(new Runnable() {
                     @Override public void run() {
-                        if (settings.debugLog) dumpViewTreeOnce(activity);
+                        
                     }
                 }, offset);
             }
@@ -498,7 +469,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                     if (filtering) filterBottomBar(activity, settings);
                     if (settings.youkuBlockAdSlot) hideHomeTopAd(activity);
                     filterTopChannels(activity, settings);
-                    if (settings.debugLog) dumpViewTreeOnce(activity);
+                    
                 } catch (Throwable error) {
                     H.info("event=ui_pass_run_threw offset=500ms error=" + H.describe(error));
                 }
@@ -516,7 +487,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         // spends its budget only on a tree that actually has nodes in it.
         for (final int offset : new int[] {2000, 4000, 8000, 12000}) {
             handler.postDelayed(new Runnable() {
-                @Override public void run() { if (settings.debugLog) dumpViewTreeOnce(activity); }
+                @Override public void run() {  }
             }, offset);
         }
         // The countdown ad only appears once playback starts, well after the passes above, so the
@@ -524,7 +495,7 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         if (!"com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
             for (final int offset : new int[] {2000, 5000, 9000, 15000}) {
                 handler.postDelayed(new Runnable() {
-                    @Override public void run() { if (settings.debugLog) dumpViewTreeOnce(activity); }
+                    @Override public void run() {  }
                 }, offset);
             }
         }
@@ -618,73 +589,6 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         return null;
     }
 
-    /**
-     * Hides the top channel bar entries the user turned off, at the View layer.
-     *
-     * <p>Why the View layer and not the data layer: the data-layer anchors
-     * ({@code p}/{@code e} on the channel filter) each carry their OWN guards inside the original
-     * body - teen mode and {@code channel.isSelection} - so returning a blanket {@code true}
-     * would replace those bodies and could drop the currently selected channel. Targeting single
-     * channels there instead needs a name→nodeKey map, which means reflection and allocation on
-     * the call path. Hiding the tab view has neither problem: the app keeps its full data model
-     * and all its selection logic, and the entry simply is not drawn.
-     *
-     * <p>Safety: {@code Config.CHANNEL_CATALOG} names no "首页", and the bottom bar is matched by
-     * {@link #findBottomBar} before this runs, so the home tab can never be a candidate here.
-     * Bails out unless at least two known channel names are found in one row, so a random list
-     * that happens to contain one word is left alone.
-     */
-    /**
-     * One-shot dump of the Activity's view tree, for locating UI containers by observation instead
-     * of by guessing. Debug setting only, depth-limited, and it logs the id NAME (not the numeric
-     * id) so a renamed resource still identifies itself. Enabled by 记录详细日志.
-     */
-    /**
-     * Exports the Activity view tree once per process, for locating UI containers by observation
-     * instead of by guessing. Gated behind 记录详细日志: the dump contains the whole view tree, so
-     * it must not land in the log on every launch.
-     *
-     * <p>The gate was removed once during debugging because nothing was being emitted; that turned
-     * out to be a grep pattern that omitted one rule, not a gate problem. It is back.
-     */
-    /**
-     * Dumps the view tree of whatever Activity is in front, up to a few times per process.
-     *
-     * <p>A single global one-shot was wrong: the budget always went to the home feed, so the
-     * detail page - where the countdown ad actually lives - could never be inspected. Dumps are
-     * now counted per Activity class, so every screen we care about gets sampled on its own.
-     */
-    private static void dumpViewTreeOnce(Activity activity) {
-        dumpViewTreeOnce(activity, false);
-    }
-
-    /**
-     * @param lateOnly when true the home feed is skipped, because its budget would otherwise be
-     *     spent on the first ten seconds and the countdown - which is all we actually need to see -
-     *     would never be sampled at all.
-     */
-    private static void dumpViewTreeOnce(Activity activity, boolean lateOnly) {
-        if (activity == null) return;
-        String name = activity.getClass().getName();
-        boolean home = "com.youku.kuflix.RootPageActivity".equals(name);
-        if (lateOnly && home) return;
-        Integer used = TREE_DUMPS.get(name);
-        int count = used == null ? 0 : used.intValue();
-        if (count >= 8) return;
-        android.view.View root = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
-        int nodes = decorNodes(activity);
-        if (root == null || nodes < 30) {
-            H.info("event=youku_viewtree_wait activity=" + name + " nodes=" + nodes);
-            return;
-        }
-        TREE_DUMPS.put(name, count + 1);
-        dumpViewTree(activity, "youku_viewtree");
-    }
-
-    /** Per-Activity-class dump counters, so the home feed no longer spends the detail page budget. */
-    private static final java.util.Map<String, Integer> TREE_DUMPS =
-            java.util.Collections.synchronizedMap(new java.util.HashMap<String, Integer>());
-
     /** Counts the nodes in an Activity's decor view, 0 when there is no window or nothing in it. */
     private static int decorNodes(Activity activity) {
         try {
@@ -725,31 +629,6 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     /** One-shot per method name, so the first caller is named and the rest are silent. */
     private static final java.util.Set<String> RESUME_PROBE_SEEN =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
-
-    /**
-     * Writes one log record per depth band.
-     *
-     * <p>A single flat record was cut off around 2.9 kB, which is where the log writer's per-line
-     * limit lands - the traversal never ran out of depth. Emitting bands separately keeps every
-     * record well under the cap, so the bottom bar and channel row can no longer fall off the end
-     * silently.
-     */
-    private static void dumpViewTree(Activity activity, String tag) {
-        try {
-            View root = activity.getWindow().getDecorView();
-            if (root == null) return;
-            android.content.res.Resources res = activity.getResources();
-            int maxDepth = 40;
-            for (int from = 0; from <= maxDepth; from += 5) {
-                StringBuilder out = new StringBuilder(2048);
-                dumpBand(root, res, from, from + 4, out);
-                if (out.length() == 0) continue;
-                H.info("event=" + tag + " depth=" + from + "-" + (from + 4) + " tree=" + out);
-            }
-        } catch (Throwable error) {
-            H.info("event=" + tag + "_error " + H.describe(error));
-        }
-    }
 
     /** Appends only the nodes whose depth falls inside the band. */
     private static void dumpBand(View view, android.content.res.Resources res, int minDepth, int maxDepth,
