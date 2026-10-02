@@ -283,10 +283,13 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     // Wrapped because round 27's catch only covered the MainHook call site and
                     // nothing caught here: a throw after the first line left no trace at all.
                     try {
-                        // The detail page never got its 500 ms pass even though the 3 s and 6 s
-                        // ones on the same handler ran, so its tree is sampled from this driver
-                        // instead - it ticks reliably and resolves whatever is in front.
-                        if (settings.debugLog) dumpViewTreeOnce(activity);
+                        // Early ticks only sample the home feed. Spending the detail page budget in
+                        // the first seconds left nothing for the 45 s and 70 s ticks, which are the
+                        // only ones that can see a running countdown ad.
+                        if (settings.debugLog
+                                && "com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
+                            dumpViewTreeOnce(activity);
+                        }
                     } catch (Throwable error) {
                         H.info("event=youku_viewtree_tick_threw tick=" + delay
                                 + "ms error=" + H.describe(error));
@@ -309,7 +312,7 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
                     Activity front = findLiveActivity(context);
                     if (front == null || !settings.debugLog) return;
                     try {
-                        dumpViewTreeOnce(front);
+                        dumpViewTreeOnce(front, true);
                     } catch (Throwable error) {
                         H.info("event=youku_viewtree_late_threw tick=" + late
                                 + "ms error=" + H.describe(error));
@@ -632,8 +635,19 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
      * now counted per Activity class, so every screen we care about gets sampled on its own.
      */
     private static void dumpViewTreeOnce(Activity activity) {
+        dumpViewTreeOnce(activity, false);
+    }
+
+    /**
+     * @param lateOnly when true the home feed is skipped, because its budget would otherwise be
+     *     spent on the first ten seconds and the countdown - which is all we actually need to see -
+     *     would never be sampled at all.
+     */
+    private static void dumpViewTreeOnce(Activity activity, boolean lateOnly) {
         if (activity == null) return;
         String name = activity.getClass().getName();
+        boolean home = "com.youku.kuflix.RootPageActivity".equals(name);
+        if (lateOnly && home) return;
         Integer used = TREE_DUMPS.get(name);
         int count = used == null ? 0 : used.intValue();
         if (count >= 8) return;
