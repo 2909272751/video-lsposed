@@ -216,8 +216,13 @@ public final class Config {
             case BLOCK_PUSH_NOTIFY:
                 return true;     // ad blocking is on by default
             case DEBUG_LOG:
-            case REDUCE_PRELOAD:
                 return false;
+            case REDUCE_PRELOAD:
+                // On by default. Cutting the preload fan-out is pure saving: the skill asks for
+                // less battery, the rule only suppresses requests the app would have made
+                // speculatively, and nothing on screen changes. It has no UI toggle, so the
+                // default is the only switch that has ever actually existed for it.
+                return true;
             case YOUKU_HIDE_BOTTOM_BAR:
                 // Destructive-shaped lever: hides the WHOLE bottom bar, so opt-in only.
                 return false;
