@@ -56,16 +56,18 @@ final class IqiyiRules {
         } else {
             H.skipped("iqiyi_ad_request", "disabled in settings");
         }
-        H.skipped("iqiyi_player_ads", "withdrawn on 17.9.2: QYPlayerADConfig.checkRegister / "
-                + "IAdInvoker.updateCupidAd / AdsController.onAdDataSourceReady / getAdCountDown "
-                + "and nx0.a getCurrentPosition all installed but never executed while ads played; "
-                + "the ad decision is made in the native Cupid SDK (MctoPlayer, [CUPID] "
-                + "HandleHttpResponse, libgdtqjs.so), not in this Java layer");
-        H.skipped("iqiyi_ad_policy", "withdrawn on 17.9.2: QYPlayerADConfig.getDefault() never called "
-                + "on device, so the policy-field zeroing never ran");
-        H.skipped("iqiyi_ad_player", "withdrawn on 17.9.2: PumaPlayer.OnAdPrepared / OnAdCallback "
-                + "never fired even with the ad on screen; kept only as a signature dump "
-                + "(iqiyi_ad_api) used to re-derive anchors from the real runtime API");
+        // Re-armed on 17.9.5. These three were withdrawn on 17.9.2 because their hooks never
+        // executed while ads were demonstrably on screen. That is a statement about 17.9.2,
+        // and the device now runs 17.9.5, so "never called on the old build" is not a
+        // prediction about this one. checkRegister is the highest-value anchor left in Java:
+        // it is the bitmask gate that decides whether a slot registers at all
+        // (C_SLOT_TYPE_PRE_ROLL=2 ... C_SLOT_TYPE_ALL=0xFFFFF), so zeroing it would stop the
+        // native Cupid SDK from ever being handed the slot, upstream of libgdtqjs.so.
+        // Nothing here claims it will work - a miss must be able to mean "still dead".
+        installPlayerAds(module, loader);
+        installAdPolicyFields(module, loader, 0);
+        H.info("iqiyi_rearm: player-ad anchors re-armed; previously withdrawn on "
+                + Config.VERIFIED_IQIYI_VERSION_NAME);
     }
 
     /**
