@@ -1970,3 +1970,41 @@ eascript 资源、服务端下发的文案），**这条前贴片是另一套广
    而这两个包**不在 base.apk**（第 44 轮已证），需在运行时用
    ClassLoader 列类或抓 /proc/<pid>/maps 继续追。
 3. 另：youku_home_top_ad 仍未收尾。
+## 四十六、第 50 轮：网络侧观测走不通；**youku_home_top_ad 其实早已生效**
+
+### logcat 里没有广告接口名
+
+正式版把日志关掉了：10583 行 logcat 中 **mtop.* 接口名 0 条**。
+「从网络侧找广告接口」这条路暂时不通。
+
+### 纠正一个挂了很久的误判：youku_home_top_ad
+
+本场日志：
+
+```
+hit=youku_home_top_ad home carousel card collapsed src=reflection
+```
+
+**这条规则一直有效**，是我拿错了画面去对——
+截图里那个「新用户限时特惠 首3月9.9元/月 立即开通」横幅在
+**详情页播放器下方**，不是首页轮播卡。首页轮播卡早已被折叠。
+
+**教训**：断言「X 没生效」之前，先确认 X 在**哪个页面**。
+
+### 同步纠正 COMPATIBILITY.md
+
+旧文档写「优酷完全不下发广告物料，无法复现」——**已证伪**，
+改为「未能拦截」，并新增「优酷前贴」小节，写清两个元素的区别、
+三条 Java 路径的零命中证据，以及硬验收标准（资源  x7f100c16）。
+
+### 收尾状态
+
+- ✅ youku_home_top_ad：有命中行，**已收尾**
+- ⚠️ 优酷前贴：pill 已拦、徽标拦不到，**明确记为未达成**
+- ❌ youku_mine_carousel / youku_mine_vip_promo：未登录进不了页面，维持不承诺
+
+### 下一轮建议
+
+前贴这条线已经投入太多轮且全部落空，**建议降级为「已知限制」**，
+把精力转向仍然可验证的项：三个 App 的**多会话复测**（确认非偶发），
+以及清理脚手架（installResumeProbes / egisterUiLifecycle / dumpLiveActivities 等）。
