@@ -858,3 +858,43 @@ AdVideoView（17 点）、RequestInfo#getAdType/setAdType、PasterAdRequestInfo#
 规则做对了，屏幕上会出现资源  x7f100c16
 「广告特权为您跳过前贴片广告」——**这句话比日志 hit= 更硬**。
 在它出现之前，任何「已跳过」的表述都不成立。
+---
+
+## 当前交付状态（0.3.53 / 第 58 轮收尾）
+
+三个 App 均处于**未登录**状态，私人 DNS 关闭。以下每条都有**同一次会话（同一 PID）
+的 hit= 命中行**支撑，其中腾讯与爱奇艺另有**多会话**复测。
+
+| App | 版本 | 状态 | 关键证据 |
+|---|---|---|---|
+| 腾讯视频 com.tencent.qqlive | 9.04.55.32321 | ✅ 广告请求闸**稳定拦截** | hit=ad_request_gate **连续 3 场冷启动全中**（第 57 轮）；hit=mine_ad_card、hit=feed_ad_cell 此前各有一场命中 |
+| 爱奇艺 com.qiyi.video | 17.9.5 | ✅ **开屏广告不再出现** | hit=iqiyi_splash requestAdAndDownload suppressed on x02.v + 截图佐证：WelcomeActivity 直接进首页、**无开屏广告**（第 52 轮）；hit=iqiyi_home_member_banner、hit=iqiyi_ad_request 另有命中 |
+| 优酷 com.youku.phone | 11.2.15 | ⚠️ **大部分生效，前贴倒计时拦不到** | 单场 7 条同时命中（youku_channel_filter/youku_csj_dsp_off/youku_home_top_ad/youku_pause_ad/youku_splash_cold_switch/youku_tab_filter/youku_video_preroll） |
+
+### 已知限制（不承诺）
+
+**优酷前贴倒计时徽标拦不到。** 未登录状态下优酷仍会下发约 110 秒的前贴广告，
+模块能做的只是让「会员可关闭此广告」那个胶囊消失；
+「68 秒」徽标由播放器**原生层**（libaliplayer.so / libalixplayer.so / libads-ac.so）绘制，
+**Java 层无 hook 可达**。
+
+判定成功与否的**硬标准**（比任何 hit= 都可靠）：
+资源 ** x7f100c16** player_user_content_experience_skip_pre_ad_tip_one
+（「广告特权为您跳过前贴片广告」）出现在屏幕上，才算成功。
+
+### 已撤回、且不得再承诺的规则
+
+youku_preroll_ad、youku_preroll_event、youku_ad_slot_gate、
+youku_ad_switch、youku_splash_cold_gate。
+这些不是「暂时没测」，是**实测证伪**——留着只会让覆盖率虚高。
+
+### 无法验证的项
+
+youku_mine_carousel、youku_mine_vip_promo 需要**登录**后才能进入「我的」页面；
+目前三个 App 均为未登录，**这两条未验证，不作任何承诺**。
+
+### 验收门槛（沿用）
+
+只有 hit= 行能证明一条规则生效；hooked **不等于**可用；
+rmed=N 必须同时检查（N=0 说明 hook 什么都没拦上）。
+且**「一场成功」不等于「修好了」**——腾讯第 53 轮就因为只跑一场而误判过一次。
