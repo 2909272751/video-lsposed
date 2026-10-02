@@ -144,6 +144,7 @@ final class YoukuRules {
         installCountdownTextProbe(module, loader);
         installEditableCountdownProbe(module, loader);
         installCanvasCountdownProbe(module, loader);
+        installAdSlotTypeProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
         reportKwadGateWithdrawn();
@@ -1584,6 +1585,64 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean CANVAS_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Reads the ad slot type off the request the SDK is about to build.
+     *
+     * <p>The countdown badge is drawn by the player native layer, so nothing in the view tree can
+     * stop it. The remaining lever is upstream: no ad requested means no ad drawn. XAdSDK keeps one
+     * request class per slot - PasterAdRequestInfo, PopAdRequestInfo, SplashAdRequestInfo,
+     * PauseAdRequestInfo - all extending RequestInfo, which carries the slot as an int in mAdType.
+     * This only reads that value; nothing is blocked until the real numbers are known, because
+     * guessing which int means pre-roll is exactly the mistake the withdrawn rules made.
+     */
+    private static void installAdSlotTypeProbe(MainHook module, ClassLoader loader) {
+        try {
+            Class<?> requestInfo = R.load(loader, "com.alimm.xadsdk.request.builder.RequestInfo");
+            int armed = 0;
+            for (Method method : requestInfo.getDeclaredMethods()) {
+                String name = method.getName();
+                if (!"getAdType".equals(name) && !"setAdType".equals(name)) continue;
+                if (method.getParameterTypes().length > 1) continue;
+                if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) continue;
+                try {
+                    module.hook(method).setId("youku_ad_slot_type_" + name).intercept(
+                            new XposedInterface.Hooker() {
+                                @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                                    try {
+                                        Object self = chain.getThisObject();
+                                        String kind = self == null ? "null"
+                                                : self.getClass().getSimpleName();
+                                        String value = null;
+                                        if (method.getParameterTypes().length == 0) {
+                                            Object got = chain.proceed();
+                                            value = String.valueOf(got);
+                                            H.hit("youku_ad_slot_type", kind + ".getAdType=" + value,
+                                                    SLOT_TYPE_SEEN);
+                                            return got;
+                                        }
+                                        value = String.valueOf(chain.getArg(0));
+                                        H.hit("youku_ad_slot_type", kind + ".setAdType=" + value,
+                                                SLOT_TYPE_SEEN);
+                                    } catch (Throwable ignored) {
+                                        // diagnostics must never break the app
+                                    }
+                                    return chain.proceed();
+                                }
+                            });
+                    armed++;
+                } catch (Throwable error) {
+                    H.info("rule=youku_ad_slot_type status=miss " + H.describe(error));
+                }
+            }
+            H.info("rule=youku_ad_slot_type status=hooked armed=" + armed);
+        } catch (Throwable error) {
+            H.info("rule=youku_ad_slot_type status=miss " + H.describe(error));
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean SLOT_TYPE_SEEN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** One dedupe flag per countdown label, so a ticking counter does not flood the log. */
