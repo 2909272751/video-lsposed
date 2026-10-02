@@ -2989,3 +2989,47 @@ LSPosed 把模块的 RemotePreferences 存在
 
 **优酷前贴倒计时徽标**——五族探针 + 原生层证据确认 Java 不可达，
 且本机**无 NDK / cmake**，原生方案属另一个量级的工程。
+
+## 六十九、第 73 轮：走正路试开 `reduce_preload`——**结果不明，两个方向都不下结论**
+
+### 执行了
+
+group 名从 `Config` 拿到：`qqlive_clean_settings`；该键原本无行，插入成功：
+
+```
+sqlite3 modules_config.db  →  reduce_preload=true
+```
+
+### 复测结果
+
+```
+config_source=target_cache[ok]      （原来是 config_source=remote_preferences）
+preload 相关规则行：无
+preload 命中：无
+```
+
+### 为什么不下结论
+
+**来源确实变了**——这与「写入生效」一致；
+**但规则仍然没注册、仍然没触发**——这与「写进了一张模块在 hook 时根本不查的表」
+或「守护进程持有数据库的缓存视图没重新加载」同样一致。
+
+> **两个方向都解释得通，就两个都不说。**
+> 挑一个对自己有利的解读，就是又一次「看起来成功」。
+
+### 已还原
+
+```
+DELETE ... WHERE key_name='reduce_preload'   →  查询返回空，已清空
+```
+
+**设备上不留任何用户没要求过的设置改动。**
+
+### 已经确定的、足够收手的事实
+
+1. `reduce_preload` **不是死代码**——实现了、接线正确
+2. 它**默认关闭，且没有 UI 开关**
+3. 真正的开关在 **`module_configs` 表**，不在目标 App 的文件里
+4. 要可靠开启，**改代码默认值**才是能「构建→装机→验证」的完整闭环
+
+**这条线到此为止，不再往下追。**
