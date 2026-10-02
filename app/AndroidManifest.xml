@@ -1,8 +1,8 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.qqliveclean"
-    android:versionCode="44"
-    android:versionName="0.3.41">
+    android:versionCode="45"
+    android:versionName="0.3.42">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
     <queries>
         <package android:name="com.tencent.qqlive" />

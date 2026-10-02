@@ -136,6 +136,7 @@ final class YoukuRules {
         // The probe stays: it is the only thing that will produce evidence the day
         // Youku does serve video-side ad material, and it costs nothing at runtime.
         installPreRollProbe(module, loader);
+        installPreRollTextRule(module, loader);
         installCountdownTextProbe(module, loader);
         // ---- A-1: pre-roll ad slot (withdrawn, see the reason below) ----
         reportPreRollAdWithdrawn();
@@ -1378,6 +1379,75 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             H.info("rule=youku_countdown_text status=hooked setText(CharSequence)");
         } catch (Throwable error) {
             H.info("rule=youku_countdown_text status=miss " + H.describe(error));
+        }
+    }
+
+    /**
+ * Removes the pre-roll countdown: the seconds badge and the members-can-close-this pill.
+ *
+ * <p>The label is proven to arrive through TextView.setText, so the receiver is known at the moment
+ * it matters. The label is blanked and its row is hidden, which takes the seconds badge with it -
+ * blanking the text alone would leave a lone number floating on the player.
+ *
+     * <p>Fail-open: anything unexpected here falls through to the original call.
+     */
+    private static void installPreRollTextRule(MainHook module, ClassLoader loader) {
+        try {
+            Class<?> textView = R.load(loader, "android.widget.TextView");
+            Method setText = null;
+            for (Method method : textView.getDeclaredMethods()) {
+                if (!"setText".equals(method.getName())) continue;
+                if (method.getParameterTypes().length != 1) continue;
+                if (!method.getParameterTypes()[0].isAssignableFrom(CharSequence.class)) continue;
+                setText = method;
+                break;
+            }
+            if (setText == null) { H.info("rule=youku_video_preroll status=miss no_setText"); return; }
+            module.hook(setText).setId("youku_video_preroll").intercept(
+                    new XposedInterface.Hooker() {
+                        @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            Object value = null;
+                            try {
+                                value = chain.getArg(0);
+                            } catch (Throwable noArgs) {
+                                return chain.proceed();
+                            }
+                            if (!(value instanceof CharSequence) || !looksLikeCountdown(value.toString())) {
+                                return chain.proceed();
+                            }
+                            final String label = value.toString();
+                            final Object receiver = chain.getThisObject();
+                            try {
+                                H.hit("youku_video_preroll", "label=" + label, PRE_ROLL_SEEN);
+                                hideCountdownRow(receiver);
+                            } catch (Throwable ignored) {
+                                // never let a cosmetic rule break playback
+                            }
+                            return chain.proceed(new Object[] {""});
+                        }
+                    });
+            H.info("rule=youku_video_preroll status=hooked setText(CharSequence)");
+        } catch (Throwable error) {
+            H.info("rule=youku_video_preroll status=miss " + H.describe(error));
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean PRE_ROLL_SEEN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Hides the row that carries the badge, after the view has been laid out. */
+    private static void hideCountdownRow(Object receiver) {
+        if (!(receiver instanceof android.view.View)) return;
+        android.view.View view = (android.view.View) receiver;
+        android.view.ViewGroup parent = view.getParent() instanceof android.view.ViewGroup
+                ? (android.view.ViewGroup) view.getParent() : null;
+        if (parent == null) return;
+        parent.setVisibility(android.view.View.GONE);
+        android.view.View grandparent = parent.getParent() instanceof android.view.ViewGroup
+                ? (android.view.ViewGroup) parent.getParent() : null;
+        if (grandparent != null
+                && ((android.view.ViewGroup) grandparent).getChildCount() <= 6) {
+            grandparent.setVisibility(android.view.View.GONE);
         }
     }
 
