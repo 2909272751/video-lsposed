@@ -1610,3 +1610,66 @@ KuflixVipTabPanelLayout#-1 v0 k1 b870,879,1222,984
    确认 39 秒 这个数字从哪条链路来——**拿到数据来源比拿到文案更值钱**。
 3. 用上面的 39 秒 截图与节点清单，重写 youku_video_preroll：
    目标不是 View，而是**广告倒计时的数据与回调层**。
+## 三十九、第 43 轮：倒计时广告的归属**查清了**——它来自运行时加载的广告 SDK
+
+本轮把「这条倒计时广告到底在哪」一路查到尽头，四条假设逐条证伪或坐实。
+
+### 假设一：渲染在子进程里 → ❌ **证伪**
+
+```
+u0_a442 20539  com.youku.phone          ← 主进程
+u0_a442 27265  com.youku.phone:channel  ← 投屏/渠道，RSS 仅 10MB
+```
+只有一个子进程，且是投屏用的，不是广告渲染进程。
+
+### 假设二：是播放器叠加窗 → ❌ **证伪**
+
+WindowManagerGlobal.mViews 全部 8 个窗口都是 Activity 的 DecorView
+（ContentFrameLayout / OneRootView / TrackerFrameLayout），
+**没有任何叠加窗，也没有 SurfaceView/TextureView 承载层**。
+
+### 假设三：是普通 View → ❌ **证伪**
+
+晚期 tick（20/30/45/70 秒，倒计时正在播时）采样 **390 个节点**，
+**没有任何节点含「秒 / 广告 / 关闭此广告 / 跳过 / 深入」文案**。
+
+### 假设四：文案编译在 APK 里 → ❌ **证伪**
+
+```
+$ grep -a '可关闭此广告' base.apk   → 未找到
+$ grep -a '深入广告'     base.apk   → 未找到
+$ grep -a -c 'openadsdk' base.apk  → 0
+$ grep -a -c 'com/bytedance/sdk'  → 0
+$ grep -a -c 'pangle'              → 3
+```
+
+**穿山甲（CSJ）SDK 根本没有编译进 base.apk**，广告 UI 也不在包里。
+文案只出现在运行时数据库 iles/DAI/Database/edge_compute.db——
+即**服务端下发的广告配置**。同目录另有 pp_tt_pangle_bykv_file，是 CSJ 的运行期数据。
+
+### 顺带挖到的关键资源 ID
+
+```
+0x7f100c16  player_user_content_experience_skip_pre_ad_tip_one  「广告特权为您跳过前贴片广告」
+0x7f100bb2  player_bingewatch_add_icon                        「尊贵的优酷X88VIP，已为您跳过前贴片广告」
+0x7f100bce  player_full_screen_rec_layer_icon_close            「尊享体验特权，为您跳过前贴片广告」
+```
+
+**优酷自己就有「已为您跳过前贴片广告」的提示 UI**，说明跳过链路是存在的，
+只是挂在 SDK 侧。这也意味着：规则做对了，**会看到这句提示作为成功标志**——
+这是比日志 hit= 更硬的画面证据。
+
+### 结论
+
+**这条倒计时前贴既不在宿主 App 的 View 层，也不在其窗口层，而在运行时加载的广告 SDK 中。**
+继续在宿主 View 上找是徒劳的；必须转到 SDK 侧，或转到**广告时长/倒计时数据**这一层。
+
+### 第 44 轮的作业
+
+1. **等 SDK 加载后再挂钩**（LSPosed 可在类出现时挂钩）：
+   针对穿山甲 com.bytedance.sdk.openadsdk / com.ss.android.* 的**广告展示入口**，
+   以及优酷播放器收到广告时长的那条回调，把秒数来源打出来。
+2. **验收标准改为画面证据**：规则生效时应出现
+   「已为您跳过前贴片广告」提示（资源  x7f100c16），
+   而不是只看日志 hit=。
+3. youku_home_top_ad 仍是独立的未完成项（esult=matched 但没隐藏）。
