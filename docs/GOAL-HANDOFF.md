@@ -2048,3 +2048,44 @@ hit=iqiyi_mcto_reach live: com.mcto.player.mctoplayer.PumaPlayer
 1. **补爱奇艺的画面佐证**（同 PID 命中行 + 首页/开屏截图）。
 2. 腾讯视频同样做一次跨会话复测。
 3. 优酷前贴维持「已知限制」，不再投入。
+## 四十八、第 52 轮：爱奇艺**补齐画面佐证**；腾讯**本场规则没装上**（回归）
+
+### ✅ 爱奇艺：hit= + 画面，同一 PID 对照成立
+
+```
+pid=20625
+hit=iqiyi_splash requestAdAndDownload suppressed on x02.v
+画面：WelcomeActivity 直接进入首页，**无开屏广告**，feed 全是正常内容卡
+```
+
+上一场（第 51 轮）iqiyi_splash 没命中、只有 iqiyi_ad_request 命中，
+本场换成 iqiyi_splash 命中而 d_request 没出现——
+**两条规则谁先命中会随场次变化，但两条各自都有命中记录。**
+**画面 + 同 PID 命中行的对照标准，本轮第一次完全满足。**
+
+### ❌ 腾讯视频：**本场 context_probe_failed，规则没装上**
+
+```
+pid=26671，该 PID 模块日志只有 6 行：
+  event=module_loaded / event=target_package / event=param_api
+  rule=context_probe_app status=hooked
+  rule=context_probe_activity status=hooked
+  event=context_probe_failed      ← 关键
+没有任何 rule=tx_* 注册行，没有任何 hit=
+```
+
+画面上确实没有开屏广告，**但这一场不能算模块的功劳**——
+没有 hit= 行就没有证据，而本场恰恰没有。
+**腾讯此前的 mine_ad_card 命中记录不能用来给本场背书。**
+
+context_probe_failed 出现在 SplashHomeActivity 阶段，
+怀疑是取 Application Context 的时机过早或该 Activity 不走常规路径。
+**这是回归，需要查。**
+
+### 下一轮的作业
+
+1. **查腾讯 context_probe_failed**：把失败原因打出来
+   （哪个 probe、抛什么），确认是时机问题还是路径问题。
+   腾讯是三个 App 里唯一这轮失败的，优先级最高。
+2. 爱奇艺已达成「日志 + 画面」双证据，可从待验证清单移出。
+3. 优酷前贴维持「已知限制」。
