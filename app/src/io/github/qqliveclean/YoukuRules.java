@@ -681,37 +681,6 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         dumpViewTree(activity, "youku_viewtree");
     }
 
-    /**
-     * Walks every window the app has added, not just the Activity's own decor view.
-     *
-     * <p>The countdown badge and the members-can-close-this pill never appeared in any Activity
-     * tree, across 593 sampled nodes, even while both were plainly on screen. That points at an
-     * overlay window owned by the player SDK rather than a view inside DetailActivity, so the
-     * Activity walk alone can never see them.
-     */
-    private static void dumpOverlayWindows(String tag) {
-        try {
-            Class<?> globalClass = Class.forName("android.view.WindowManagerGlobal", false,
-                    YoukuRules.class.getClassLoader());
-            Object global = R.find(globalClass, "getInstance", globalClass, new Class<?>[0]).invoke(null);
-            Object list = readField(R.findField(globalClass, "mViews"), global);
-            if (!(list instanceof java.util.List)) return;
-            android.content.res.Resources res = android.content.res.Resources.getSystem();
-            for (Object view : (java.util.List<?>) list) {
-                if (!(view instanceof View)) continue;
-                View root = (View) view;
-                int nodes = countNodes(root, new int[1]);
-                if (nodes < 5) continue;
-                StringBuilder out = new StringBuilder(1200);
-                walkToDepth(root, 0, 0, 6, res, out);
-                H.info("event=youku_window_windows tag=" + tag + " root=" + root.getClass().getSimpleName()
-                        + " nodes=" + nodes + " tree=" + out);
-            }
-        } catch (Throwable error) {
-            H.info("event=youku_window_windows_threw tag=" + tag + " error=" + H.describe(error));
-        }
-    }
-
     /** Per-Activity-class dump counters, so the home feed no longer spends the detail page budget. */
     private static final java.util.Map<String, Integer> TREE_DUMPS =
             java.util.Collections.synchronizedMap(new java.util.HashMap<String, Integer>());
@@ -752,53 +721,6 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
     /** Set the first time the delayed UI pass actually executes. */
     private static final java.util.concurrent.atomic.AtomicBoolean RESUME_PASSED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
-
-    /**
-     * Runtime enumeration of Activity lifecycle anchors.
-     *
-     * <p>Both anchors tried so far - Instrumentation.callActivityOnResume and
-     * Activity.performCreate - report hooked and then never execute their body, proven by the
-     * youku_resume_entered breadcrumb logging zero times. Rather than keep swapping anchors on
-     * theory, hook every plausible lifecycle method at once and let the device say which ones the
-     * app actually calls. Runs only when the debug setting is on, once per method per process.
-     */
-    private static void installResumeProbes(MainHook module, ClassLoader loader) {
-        String[][] candidates = {
-                {"performCreate", "android.os.Bundle"},
-                {"performStart", ""},
-                {"performResume", ""},
-                {"performPause", ""},
-                {"performStop", ""},
-                {"performDestroy", ""},
-                {"onCreate", "android.os.Bundle"},
-                {"onStart", ""},
-                {"onResume", ""},
-                {"onNewIntent", "android.content.Intent"},
-                {"onWindowFocusChanged", "boolean"},
-        };
-        for (String[] candidate : candidates) {
-            final String name = candidate[0];
-            try {
-                Class<?> activityClass = Class.forName("android.app.Activity", false, loader);
-                Class<?>[] params = candidate[1].isEmpty() ? new Class<?>[0]
-                        : new Class<?>[]{Class.forName(candidate[1], false, loader)};
-                Method method = R.find(activityClass, name, void.class, params);
-                if (method == null) { H.warn("event=resume_probe " + name + " absent"); continue; }
-                module.hook(method).setId("youku_resume_probe_" + name).intercept(new XposedInterface.Hooker() {
-                    @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                        if (RESUME_PROBE_SEEN.add(name)) {
-                            H.warn("event=resume_probe " + name + " fired on "
-                                    + (chain.getArg(0) == null ? "?"
-                                       : chain.getArg(0).getClass().getName()));
-                        }
-                        return chain.proceed();
-                    }
-                });
-            } catch (Throwable error) {
-                H.warn("event=resume_probe " + name + " hook_error " + H.describe(error));
-            }
-        }
-    }
 
     /** One-shot per method name, so the first caller is named and the rest are silent. */
     private static final java.util.Set<String> RESUME_PROBE_SEEN =
@@ -1390,7 +1312,8 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
                 && ((android.view.ViewGroup) grandparent).getChildCount() <= 6) {
             grandparent.setVisibility(android.view.View.GONE);
         }
-    }    private static void installPauseAdGate(MainHook module, ClassLoader loader) {
+    }
+    private static void installPauseAdGate(MainHook module, ClassLoader loader) {
         final String rule = "youku_pause_ad";
         Class<?> orange;
         try {
