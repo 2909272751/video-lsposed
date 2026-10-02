@@ -2089,3 +2089,48 @@ context_probe_failed 出现在 SplashHomeActivity 阶段，
    腾讯是三个 App 里唯一这轮失败的，优先级最高。
 2. 爱奇艺已达成「日志 + 画面」双证据，可从待验证清单移出。
 3. 优酷前贴维持「已知限制」。
+## 四十九、第 53 轮：腾讯 context_probe_failed **已定位并缓解**
+
+### 定位
+
+上一轮我只看到 event=context_probe_failed，没看到后面的 detail=——
+**是我上一轮的提取正则把它截掉了，日志本身是完整的**：
+
+```
+event=context_probe_failed detail=getInitialApplication() returned null
+```
+
+模块在 onClassLoader 阶段取 Application Context，**腾讯那时还没创建 Application**，
+返回 null；两个兜底 hook（callApplicationOnCreate / callActivityOnCreate）
+在那一场也都没触发，于是整个会话**一条规则都没装**。
+
+### 改动：加一条有界轮询兜底
+
+startContextRetry()：守护线程每 500 ms 试一次 ContextFinder.find()，
+最多 60 次（约 30 秒），拿到就 configure()。
+configure() 里已有 CAS 守卫，谁先到谁生效，其余自动变 no-op。
+
+**理由**：hook 是赌 App 走某条特定路径，轮询不管它走哪条都成；
+有上限、离开主线程、不会空转。
+
+### 本轮结果：规则装上了
+
+```
+pid=11465，模块日志 44 行（上轮 6 行）
+rule=ad_request_gate status=hooked
+rule=splash_request_gate status=hooked
+rule=splash_mosaic_gate / splash_modern_master_gate / splash_view_gate  status=hooked
+rule=feed_ad_cell / pause_ad_gate / home_promo / tencent_home_top_ad  status=hooked
+rule=splash_decision_gate status=skipped
+rule=channel_bar status=skipped
+```
+
+**但本场零 hit=——腾讯这次没下发开屏广告，闸门无从触发。**
+所以这轮证明的是「**规则装得上**」，不是「广告拦得住」。
+拦截有效性仍以此前 mine_ad_card 的命中记录为准，两件事分开记账。
+
+### 下一轮
+
+1. **多开几场腾讯冷启动**，确认规则稳定装上（不止这一场）。
+2. 触发一次能产生 hit= 的场景（腾讯开屏/信息流广告），才算拦截有效性复测。
+3. 优酷前贴维持「已知限制」。
