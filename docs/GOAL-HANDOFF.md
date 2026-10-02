@@ -1927,3 +1927,46 @@ rule=youku_ad_slot_type status=hooked armed=2
 2. 命中后再沿 RequestInfo.mExtraParams / mAdType 往上找真正的下发调用点，
    **拿到真实调用栈再决定拦截位置**——不要再按名字猜。
 3. 一并收尾：youku_home_top_ad（esult=matched 但没隐藏）。
+## 四十五、第 49 轮：前贴片**不走 XAdSDK**，这条链路也证伪了
+
+### 结果
+
+```
+rule=youku_paster_request status=hooked armed=2
+rule=youku_ad_slot_type   status=hooked armed=2
+一整场播放，两个都是 0 命中。
+```
+
+**构造器必然触发**——要发前贴片请求就得 new PasterAdRequestInfo，
+所以「0 命中」不是名字猜错，而是**这条链路压根没被走过**。
+
+### 由此得到一个重要事实
+
+前贴片请求**不经过 com.alimm.xadsdk.request.builder.PasterAdRequestInfo**。
+结合第 44 轮的证据（CSJ/GDT 的 libads-ac.so、pp_adnet、
+eascript 资源、服务端下发的文案），**这条前贴片是另一套广告系统**，
+大概率是优酷**自己的、且已混淆**的广告链路
+（Lcom/youku/AdRequestManager 在 dex 里根本找不到类描述符，就是被改名了）。
+
+### 为什么不能再按名字猜
+
+连续三次按名字锚点全部落空：
+- com.youku.xadsdk.ui.component.AdVideoView（17 个点，0 触发）
+- RequestInfo#getAdType/setAdType（0 触发）
+- PasterAdRequestInfo#<init>（0 触发）
+
+**优酷的广告链路已混淆，静态猜名的成功率是 0。**
+继续猜名字是在重复前几轮的错误。
+
+### 第 50 轮的作业（换思路：从网络侧观测）
+
+**先观测、后拦截**，且**不再猜类名**：
+
+1. 从**网络请求**入手找出广告接口：优酷用阿里 MTop SDK，
+   在**真机日志**里按 mtop + d 过滤，找出会话中真实出现的广告接口名。
+2. 或者：用已确认存在的**运行时证据**反推——
+   pp_adnet/retry/report_cgi、eascript、pp_tt_pangle_bykv_file
+   说明广告走 GDT/CSJ，接口可能在 com.qq.e.* 或 CSJ 的包内，
+   而这两个包**不在 base.apk**（第 44 轮已证），需在运行时用
+   ClassLoader 列类或抓 /proc/<pid>/maps 继续追。
+3. 另：youku_home_top_ad 仍未收尾。
