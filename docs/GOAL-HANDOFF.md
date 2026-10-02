@@ -2732,3 +2732,65 @@ MainHook.java         qlc-0.3.55
 `hit=youku_video_preroll` = **前贴的「会员可关闭此广告」胶囊被拦下并隐藏了**，
 这是前贴里 **Java 唯一够得着的部分**。
 旁边的倒计时徽标**依旧拦不到**——这一点没有因为本轮而改变。
+
+## 六十四、第 68 轮：**`feature=` 报告——比 `hit=` 更完整的一把尺**
+
+本轮去制造条件触发那三条「条件未满足」的规则，结果没命中它们，
+却翻出一样更有用的东西。
+
+### 先说那三条
+
+连续 3 次冷启动 + 切标签 + 滚动 feed，
+`splash_manager` / `tab_bar_data` / `reduce_preload` **全部 hit=0，且没有注册行**。
+再看安装点，发现它们**全被设置开关门控**：
+
+```
+if (settings.reducePreload) PreloadRules.install(this, loader);
+SplashRules.install(this, loader, settings.blockSplash, settings.blockSplashPreload);
+日志里：feature=reduce_preload result=off
+```
+
+**所以它们不是「没遇到条件」，是「被设置关掉了」。** 这个区别很重要。
+
+### 真正的收获：`feature=` 区分 matched / off
+
+模块本来就有一条比 `hit=` 更完整的特性报告。读它之后，
+**我上一轮写的「需登录无法验证」是错的**：
+
+```
+result=matched（已装上，不是我以为的「测不到」）
+  youku_mine_carousel      youku_mine_vip_promo
+  mine_banner_request      mine_banner_response
+  iqiyi_mine_banner        push_notify
+
+result=off（被设置关闭）
+  reduce_preload / splash_preload / channel_bar / iqiyi_ad_player /
+  iqiyi_ad_policy / iqiyi_player_ads / iqiyi_tab_filter / player_pause_gate /
+  sidebar_entrances / splash_gate / splash_decision_gate / splash_start_gate /
+  youku_ad_request / youku_ad_slot_gate / youku_ad_switch /
+  youku_bottom_bar_hide / youku_kwad_ad / youku_kwad_api / youku_orange_api
+```
+
+### 顺手核到一件该核的事
+
+**5 条已撤回规则全部 `result=off`**：
+
+```
+youku_preroll_ad / youku_preroll_event / youku_ad_slot_gate /
+youku_ad_switch / youku_splash_cold_gate
+```
+
+**「已撤回」本来就该长这样。** 之前我一直只凭记忆认定它们没启用，
+现在有日志佐证了。
+
+### 但不要把 `matched` 当成 `hit`
+
+**`matched` = hook 目标找到、规则已装上**，
+**不等于它在真实广告上触发过**。
+「拦截成功」仍然只有 `hit=` 能证明——**不把 `matched` 升级成拦截证据**。
+
+### 下一轮
+
+1. **改 `COMPATIBILITY.md` 的「无法验证」表**——上一轮那张表是错的，
+   `youku_mine_*` / `mine_banner_*` / `iqiyi_mine_banner` / `push_notify` 属于「已装上、未触发」
+2. 把 `feature=` 报告和 `hit=` 并列为验收工具

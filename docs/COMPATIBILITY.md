@@ -910,18 +910,28 @@ WelcomeActivity 直接进入首页，**无开屏广告**，feed 全是正常内�
 `player_user_content_experience_skip_pre_ad_tip_one`（「广告特权为您跳过前贴片广告」）
 出现在屏幕上。
 
-### 无法验证的项（需登录或特定条件）
+### 规则的三种状态（`feature=` 报告，第 68 轮实测）
 
-| 规则 | 需要什么 |
-|---|---|
-| `youku_mine_carousel` / `youku_mine_vip_promo` | 登录后进「我的」页 |
-| `mine_banner_request` / `mine_banner_response` / `iqiyi_mine_banner` | 登录后进「我的」页 |
-| `push_notify` | 真收到一条推送 |
-| `reduce_preload` / `splash_manager` / `tab_bar_data` | 真实功能，触发条件未遇到 |
+模块对每条规则输出一条 `feature=<名字> result=<matched|off>`。
+**这是比 `hit=` 更完整的一把尺**：
 
-**这些「零命中」不等于死代码**，本会话周期已刻意区分：
-「可证明从不触发」的探针已删（优酷五族 + 爱奇艺两族），
-上面这些是「条件没遇到」，保留但不承诺。
+| 状态 | 含义 | 举例 |
+|---|---|---|
+| `matched` | **hook 目标找到、规则已装上** | `youku_mine_carousel`、`youku_mine_vip_promo`、`mine_banner_request`、`mine_banner_response`、`iqiyi_mine_banner`、`push_notify`、`youku_pause_ad`、`iqiyi_splash` |
+| `off` | **被设置开关关闭** | `reduce_preload`、`splash_preload`、`iqiyi_tab_filter`、`youku_ad_request`、`youku_ad_switch` 等 |
+| —— | **装上且真实触发**（需 `hit=` 佐证） | 见上方各 App 命中清单 |
+
+**「已装上」不等于「拦到过」**——只有 `hit=` 能证明拦截成功。
+`matched` 只能证明这条规则是活的。
+
+**尚未在真实场景触发过的 `matched` 规则**（多为登录后页面或需真实推送）：
+
+```
+youku_mine_carousel / youku_mine_vip_promo       需登录进「我的」
+mine_banner_request / mine_banner_response / iqiyi_mine_banner   需登录进「我的」
+push_notify                                       需真收到一条推送
+reduce_preload / splash_manager / tab_bar_data    result=off，需先打开设置开关
+```
 
 ### 已撤回、且不得再承诺
 
