@@ -2174,3 +2174,54 @@ startContextRetry() 在 context_probe_failed 之后立刻调用（MainHook 第 9
    确认方法到底进没进；再在 worker.start() 前后各加一条，确认线程起没起。
 3. 若方法确实没被调用，检查 onClassLoader 里前面是否有提前 eturn。
 4. 以上确定后，再谈「腾讯规则能否稳定装上」。
+## 五十一、第 55 轮：轮询线程**确实起来了**，但卡在里面出不来
+
+### 本轮结果
+
+```
+pid=12159，模块行=9
+event=context_retry_entered target=com.tencent.qqlive     ← 新增的无条件日志
+event=context_retry_started                                ← 新增的无条件日志
+event=context_probe_failed detail=getInitialApplication() returned null
+rule=context_probe_app status=hooked
+rule=context_probe_activity status=hooked
+命中=0
+```
+
+**第 54 轮的 etry=0 由此解释：那一轮设备上跑的不是带重试的构建。**
+本轮把方法入口和 worker.start() 前后各加一条无条件日志，立刻就看见了——
+这正是上一轮说「三种可能都不排除、不猜」的做法。
+
+### 新问题：线程进去了，却**卡住出不来**
+
+全局统计只有：
+
+```
+event=context_retry_entered x1
+event=context_retry_started  x1
+```
+
+**没有 context_retry_hit，也没有 context_retry_exhausted。**
+本轮等待 45 秒，而 60 × 500ms = 30 秒 必然打出 exhausted。
+
+**所以线程卡在 ContextFinder.find() 里面出不来**——
+它大概在反射 ActivityThread.currentActivityThread() 时挂住了，
+而那个 catch (Throwable) 捕不到**卡住**（不是抛异常）。
+
+> 教训：catch (Throwable) 只能兜「抛异常」，兜不住「永久阻塞」。
+> 后台轮询如果不设**绝对截止时间**，一次阻塞就是一条永久泄漏的线程。
+
+### 顺带：module_build version=0.0 这条自证行无效
+
+getImplementationVersion() 在这个构建里返回  .0，
+不能用来判断设备跑的是哪一版。**这条线作废，别拿它当证据**；
+要确认版本仍然得读设备上的 module.prop。
+
+### 下一轮（很具体）
+
+1. **给轮询加绝对截止时间**（用 System.currentTimeMillis() 记起始，
+   超过 30 秒无条件放弃），保证线程一定结束。
+2. **每次尝试打一行**（attempt 号 + find 的耗时），
+   这样能看出它卡在第几次、卡了多久——而不是只有一个「没打出来」。
+3. 仍拿不到上下文时，**按既有路径 configure(null, ...) 无上下文配置**，
+   至少让规则装上（context_unavailable 那条路本来就是这个意思）。
