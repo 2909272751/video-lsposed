@@ -2471,3 +2471,64 @@ head 被当成本地 cmdlet 去找 → 报错。**不影响测试本身**（只�
 
 **剩余唯一有意义的动作是原生层方案（hook libaliplayer.so）**，
 这超出 LSPosed 模块范畴，需要单独评估工程量与可行性，**等用户决定**。
+## 五十八、第 62 轮：**原生层方案的可行性，用证据回答**
+
+上一轮问用户要不要走原生层，用户没回。按「能自己做的绝不等用户」，
+本轮**先把这件事的可行性查清楚**，好让那个选择有依据而不是猜测。
+
+### 结论：**当前不具备条件，成本远高于预期**
+
+```
+【工具链】
+SDK 顶层：build-tools / cmdline-tools / extras / licenses / platform-tools / platforms
+ndk      → 缺
+ndk-bundle → 缺
+cmake    → 无
+ninja    → 无
+build-tools 只有 34.0.0 和 35.0.0
+全机扫描（AppData\Local\Android、C:\Android、开发工具链）→ 未找到任何 NDK / cmake
+模块现有 native 资产（*.so / *.cpp / CMakeLists / Android.mk）→ 0 个
+
+【设备侧】
+run-as com.youku.phone → "package not debuggable"（发行版应用，正常）
+lldb / gdbserver → 未安装
+```
+
+但**目标库确实在**：
+
+```
+/data/app/~~hXbDZetnsoHYG6LOUkMUPA==/com.youku.phone-ie09_.../lib/arm64/
+  libaliplayer.so     3,673,040 字节
+  libalixplayer.so
+  libads-ac.so
+```
+
+**libaliplayer.so 3.5 MB，商业发行版、符号大概率被剥、且绑定具体版本。**
+
+### 因此，原生层方案的实际代价是
+
+1. **先装 NDK + cmake**（NDK 压缩包约 1 GB+，还要接受 sdkmanager 的网络下载）
+2. **从零建立 native 构建链**（当前模块 0 个 native 资产，CMakeLists 都没有）
+3. **写 .so hook** libaliplayer.so，而它**符号被剥、版本绑定**，
+   优酷一更新就失效
+4. **需要 LSPosed 侧加载自定义 .so**——libxposed 的模块是否支持加载任意 native 库
+   **本项目尚未验证过**
+5. **调试手段缺失**：设备无 lldb/gdbserver，release 包不能 run-as
+
+**这比之前所有轮次加起来都重，而且不保证成功。**
+所以那个选择我不会擅自替你做。
+
+### 记一条通用教训
+
+本轮又踩了 PowerShell 里 $(...) 提前求值的老坑（第二次）：
+``
+&  shell "ls /data/app/~$(pm path ...)"   ← PowerShell 先算了 $(pm path ...)
+```
+**设备侧命令替换一律用 &  shell su -c "..."（双引号、直接交给设备 shell）**，
+不要在本地双引号串里嵌 $(...)。
+
+### 当前交付状态（冻结功能）
+
+三应用均正常、均有多场或单场证据、功耗合规。
+**功能层面本会话周期的工作已经收口**，唯一未达成项是优酷前贴徽标，
+原因已用证据锁定在原生层，且当前环境不具备动手条件。
