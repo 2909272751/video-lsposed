@@ -1762,3 +1762,56 @@ rule= 前缀只有两个：rule=push_notify、rule=youku_splash_cold_switch
    youku_window_windows 10 条，共 173 行里大半是采样），
    既费电又淹没关键行，建议按 skill 规范收一收。
 3. 规则本身待验证：倒计时徽标消失，且出现资源  x7f100c16「已为您跳过前贴片广告」。
+## 四十二、第 46 轮：规则**触发**了，但倒计时徽标**仍在**，尚未达成
+
+### 先把上一轮的日志异常钉死
+
+加了两条标记，结果很清楚：
+
+```
+event=youku_install_begin
+event=youku_install_done
+rule= 前缀 12 种全部回来了（youku_video_preroll / youku_preroll_probe / youku_tab_filter …）
+```
+
+**结论：第 45 轮那次「注册行整段消失」是偶发，不是代码路径问题。**
+install() 一直跑得完整。以后再遇到同类现象，先看这两个标记再下结论。
+
+### 本轮实测结果
+
+```
+hit=youku_video_preroll label=会员可关闭此广告
+installs=[push_notify=ok youku_splash_cold_switch=ok youku_splash_hot_switch=ok
+          youku_csj_dsp_off=ok youku_tab_filter=ok youku_ui_anchor=ok
+          youku_channel_filter=ok youku_home_top_ad=ok youku_pause_ad=ok
+          youku_preroll_probe=ok youku_mine_vip_promo=ok youku_mine_carousel=ok]
+```
+
+**截图对照（同一次会话、同一 PID）**：
+- ✅「会员可关闭此广告」这句**已消失**
+- ❌ 右上角**「68 秒」倒计时徽标仍在**，广告照常播完
+- ❌ 没有出现资源  x7f100c16「已为您跳过前贴片广告」
+
+### 关键发现：「N 秒」根本没走 setText
+
+本场**只有 1 条 label 命中**，就是会员提示那句。
+looksLikeCountdown() 里的 \d{1,3}\s*秒 分支**一次都没匹配到**。
+
+**说明倒计时数字不是用 setText(CharSequence) 设的。**只有三种可能：
+1. TextView.getEditableText() 拿到 Editable 后 eplace() 逐秒改——
+   这是倒计时的常规写法，setText 根本不会触发；
+2. setText(int resId) 重载（但秒数是动态的，可能性低）；
+3. 徽标是自绘 View，在 onDraw 里 canvas.drawText。
+
+**所以上一轮「它就是个普通 View」的结论要收窄**：
+会员提示那一句确实是普通 View；**倒计时徽标本身仍未定位**。
+
+### 第 47 轮的作业
+
+1. **按上面三条依次验证，不要猜**：
+   - 在 Editable.replace(int,int,CharSequence) 上加同样的探针（最可能，成本最低）
+   - 再不行才考虑自绘 View 的 onDraw
+2. **注意**：命中会员提示 ≠ 广告被跳过。当前规则的净效果只是少了一个 pill，
+   **离「跳过前贴片」还有距离**，不要按成功记。
+3. 已顺带按 skill 省电规范收掉诊断：晚期 tick 从 4 个减到 2 个（{30000,70000}），
+   去掉 dumpOverlayWindows() 调用（窗口层已证明没有叠加窗，留着纯浪费）。
