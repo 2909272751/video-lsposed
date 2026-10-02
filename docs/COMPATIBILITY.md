@@ -860,7 +860,7 @@ AdVideoView（17 点）、RequestInfo#getAdType/setAdType、PasterAdRequestInfo#
 在它出现之前，任何「已跳过」的表述都不成立。
 ---
 
-## 当前交付状态（0.3.53 / 第 58 轮收尾）
+## 当前交付状态（0.3.54 / 第 61 轮）
 
 三个 App 均处于**未登录**状态，私人 DNS 关闭。以下每条都有**同一次会话（同一 PID）
 的 hit= 命中行**支撑，其中腾讯与爱奇艺另有**多会话**复测。
@@ -898,3 +898,17 @@ youku_mine_carousel、youku_mine_vip_promo 需要**登录**后才能进入「我
 只有 hit= 行能证明一条规则生效；hooked **不等于**可用；
 rmed=N 必须同时检查（N=0 说明 hook 什么都没拦上）。
 且**「一场成功」不等于「修好了」**——腾讯第 53 轮就因为只跑一场而误判过一次。
+
+### 0.3.54 跨应用回归（第 61 轮）
+
+清掉优酷转储诊断后，三个 App 在同一构建上各跑一场：
+
+```
+腾讯视频  hit=ad_request_gate
+爱奇艺    hit=iqiyi_splash / iqiyi_home_top_ad / iqiyi_home_member_banner
+优酷      hit=youku_home_top_ad / youku_splash_hot_switch
+```
+
+**无跨应用回归。** 优酷侧 view-tree 转储诊断已删除（每场 18~28 次 → 0 次），
+ui_pass_run / ui_activity_census / ui_anchor_resolved 等
+**判断规则是否被调用所必需**的日志故意保留。
