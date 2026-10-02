@@ -2532,3 +2532,60 @@ lldb / gdbserver → 未安装
 三应用均正常、均有多场或单场证据、功耗合规。
 **功能层面本会话周期的工作已经收口**，唯一未达成项是优酷前贴徽标，
 原因已用证据锁定在原生层，且当前环境不具备动手条件。
+## 五十九、第 63 轮：**完整性审计——发现 17 个零证据规则**
+
+本轮做一件该做但一直没做的事：**把代码里每一条规则都对着证据核一遍**。
+因为我这几轮大量删改代码，可能误删，也可能一直有「从未被验证」的规则混在里面。
+
+### 方法
+
+从全部 .java 里抽出所有出现在 H.hooked/hit/miss(...) 的规则名（28 个），
+对照本会话周期确认过的命中清单；再把**本机 112 个历史日志**全部扫一遍，
+统计每条规则的 hit= 出现次数。
+
+### 结果：28 条里 7 条有证据，21 条没有
+
+有证据（7）：
+
+```
+iqiyi_home_member_banner / iqiyi_home_top_ad / iqiyi_mcto_reach /
+youku_channel_filter / youku_home_top_ad / youku_tab_filter / youku_video_preroll
+（另有变量名形式的有证据规则：ad_request_gate、mine_ad_card、feed_ad_cell、
+  iqiyi_splash、iqiyi_ad_request、youku_csj_dsp_off、youku_pause_ad、
+  youku_splash_cold_switch / hot_switch）
+```
+
+**112 个日志文件里 hit= 次数为 0 的 17 条**：
+
+```
+iqiyi_ad_api / iqiyi_ad_api2 / iqiyi_ad_data / iqiyi_ad_player_alive /
+iqiyi_ad_reach / iqiyi_player_sdk_probe / iqiyi_splash_getter / iqiyi_tab_filter /
+iqiyi_mine_banner / mine_banner_request / mine_banner_response /
+push_notify / reduce_preload / splash_manager / tab_bar_data / tab_bar_data_accessor /
+youku_ui_anchor
+```
+
+### 这是个该纠正的疏漏
+
+**我第 51 轮只按同一标准清掉了优酷的死探针，却把爱奇艺那一批留着了。**
+看名字（*_probe、d_api、d_api2、d_data、d_player_alive、d_reach）
+它们是前几轮为排查加的**探针**，性质和已删的优酷五族探针完全一样——
+**留着既耗电，又让「规则数量」看起来比实际可用的大**。
+
+### 但不能一刀切，必须分两类
+
+| 类型 | 判定 | 处理 |
+|---|---|---|
+| **可证明从不触发**（探针，目标代码路径不存在） | 与优酷那批同类 | **应删除** |
+| **未登录无法验证**（mine_banner_*、youku_mine_* 需进「我的」页） | 不是死代码，是没测到 | **保留但不承诺** |
+
+**push_notify 属于第三类**：要真收到一条推送才可能触发，
+零命中**不能证明**它是死的。
+
+> **「零命中」有两种完全不同的成因——「不可能触发」和「这次没遇到」。
+> 不读代码就分不出来，所以这一步不能猜。**
+
+### 下一轮
+
+逐条读这 17 条的实现，**只删「可证明从不触发」的那一类**，
+删完重跑三应用，确认规则行数不下降、命中不变。
