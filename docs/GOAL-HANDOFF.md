@@ -2629,3 +2629,38 @@ reduce_preload / splash_manager / tab_bar_data                   真实功能，
 `module_build` 仍报 `qlc-0.3.54`，尽管常量已改成 `qlc-0.3.55`——
 **manifest / module.prop / build.ps1 三处版本没跟着升**，APK 仍是 `v0.3.54.apk`。
 **下一轮先把四处版本对齐再说别的。**
+
+## 六十一、第 65 轮：四处版本号对齐到 **0.3.55**
+
+### 修的是什么
+
+上一轮 `module_build` 报 `qlc-0.3.54` 而源码常量已是 `qlc-0.3.55`——
+**只改了常量，没改另外三处**：
+
+```
+AndroidManifest.xml   versionName=0.3.55   versionCode=58
+META-INF/module.prop  version=0.3.55       versionCode=58
+build.ps1             video-clean-v0.3.55.apk
+MainHook.java         qlc-0.3.55
+```
+
+装机确认：`module_build version=qlc-0.3.55` —— **这是好几个轮次以来第一次，
+构建能自证自己是哪一版**。
+
+### 三应用同场复测
+
+```
+优酷    hit=youku_csj_dsp_off / hit=youku_tab_filter
+爱奇艺  hit=iqiyi_ad_request / hit=iqiyi_home_top_ad
+腾讯    （无命中）
+```
+
+**删掉爱奇艺那两个探针没有付出任何代价**（规则行数正常，另两个 App 照常命中）。
+
+### 关于腾讯这场零命中——按纪律如实说
+
+**零命中不是回归**（闸门只在腾讯真的下发广告请求时才触发，之前连续 3 场都中过），
+**但这一场也不能拿来证明腾讯正常**，之前那 3 场不能替本场背书。
+
+**诚实的说法是：腾讯有 3 场历史证据，本场静默。**
+**下一轮重跑确认，而不是挑一个对自己有利的解读。**
