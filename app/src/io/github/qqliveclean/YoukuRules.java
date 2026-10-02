@@ -241,14 +241,14 @@ final class YoukuRules {
                             .intercept(new XposedInterface.Hooker() {
                         @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
                             Object result = chain.proceed();
-                            if (chain.getArg(0) instanceof Activity && UI_ANCHOR_SEEN.add(base + "." + lifecycle)) {
-                                Activity activity = (Activity) chain.getArg(0);
+                            Activity activity = activityArg(chain);
+                            if (activity != null && UI_ANCHOR_SEEN.add(base + "." + lifecycle)) {
                                 H.info("event=ui_anchor_fired anchor=" + base + "." + lifecycle
                                         + " activity=" + activity.getClass().getName()
                                         + " hierarchy=" + describeHierarchy(activity.getClass()));
                             }
-                            if (chain.getArg(0) instanceof Activity) {
-                                onActivityResumed((Activity) chain.getArg(0), settings, "anchor");
+                            if (activity != null) {
+                                onActivityResumed(activity, settings, "anchor");
                             }
                             return result;
                         }
@@ -263,6 +263,24 @@ final class YoukuRules {
 
     private static final java.util.Set<String> UI_ANCHOR_SEEN =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    /**
+     * 取 Activity 参数，没有就返回 null。
+     *
+     * <p>这些生命周期锚点里混着零参数的方法——{@code Activity.onResume()} 就是——
+     * 而这里原先无条件 {@code chain.getArg(0)}，于是每次 resume 都抛三次
+     * {@code ArrayIndexOutOfBoundsException: length=0; index=0}。
+     * ProtectiveHooker 兜住了所以 App 不会崩，但那三条异常会淹没真正的错误，
+     * 而且让「有没有崩」这条判断永远为真。取不到参数就当作没有 Activity。
+     */
+    private static Activity activityArg(XposedInterface.Chain chain) {
+        try {
+            Object arg = chain.getArg(0);
+            return arg instanceof Activity ? (Activity) arg : null;
+        } catch (Throwable noArgument) {
+            return null;
+        }
+    }
 
     /**
  * Drives the UI rules without hooking any lifecycle event.

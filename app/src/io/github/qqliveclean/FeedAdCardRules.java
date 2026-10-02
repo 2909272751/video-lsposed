@@ -110,10 +110,15 @@ final class FeedAdCardRules {
         if (!(view instanceof TextView)) return false;
         CharSequence text = ((TextView) view).getText();
         if (text == null) text = view.getContentDescription();
-        if (text == null) return false;
-        String value = text.toString().trim();
+        return text != null && isAdBadgeText(text.toString());
+    }
+
+    /** 角标判定：只认短文本的「广告」，免得把「开通黄金VIP关闭此广告」这种长句误当成角标。 */
+    static boolean isAdBadgeText(String raw) {
+        if (raw == null) return false;
+        String value = raw.trim();
         if (value.isEmpty() || value.length() > 6) return false;
-        return value.equals("广告") || value.startsWith("广告") || value.contains("广告");
+        return value.contains("广告");
     }
 
     /** 从角标向上找到所属卡片。找不到就返回 null——绝不猜。 */
@@ -186,13 +191,50 @@ final class FeedAdCardRules {
             card.setVisibility(View.GONE);
             COLLAPSED.add(new WeakReference<View>(card));
             if (COLLAPSED.size() > 256) COLLAPSED.remove(0);
+            collapseEmptyRow(card);
             return true;
         } catch (Throwable error) {
             return false;
         }
     }
 
-    /** 登录态变化或复用视图后缓存要作废，否则新出现的同款卡片会被误认为已处理。 */
+    /**
+     * 一行里往往并排放着两张广告卡（优酷「更多精彩」就是两列）。
+     * 只收起自己会留下一个空位，行高还在，看起来像缺了一块。
+     * 所以：父容器里如果已经没有可见子项，就把整行也收掉——
+     * 这正是「整个块隐藏」，而只对**确实空了**的行做，不会误伤混排的正常内容。
+     */
+    private static void collapseEmptyRow(View card) {
+        try {
+            ViewParent parent = card.getParent();
+            if (!(parent instanceof ViewGroup)) return;
+            ViewGroup row = (ViewGroup) parent;
+            for (int i = 0; i < row.getChildCount(); i++) {
+                View child = row.getChildAt(i);
+                if (child == null) continue;
+                if (child.getVisibility() == View.VISIBLE) return;
+            }
+            if (row.getChildCount() == 0) return;
+            // 同样的页面根闸：空行也不该大到占满整屏
+            int w = row.getResources().getDisplayMetrics().widthPixels;
+            int h = row.getResources().getDisplayMetrics().heightPixels;
+            if (w > 0 && h > 0 && row.getWidth() >= w * 9 / 10 && row.getHeight() >= h * 7 / 10) {
+                return;
+            }
+            ViewGroup.LayoutParams params = row.getLayoutParams();
+            if (params != null) {
+                params.height = 0;
+                row.setLayoutParams(params);
+            }
+            row.setVisibility(View.GONE);
+        } catch (Throwable error) {
+            // 收不掉空行只是留个空位，不影响正确性
+        }
+    }
+
+    /**
+     * 登录态变化或复用视图后缓存要作废，否则新出现的同款卡片会被误认为已处理。
+     */
     static void resetCards() {
         COLLAPSED.clear();
     }
