@@ -74,6 +74,9 @@ public final class MainHook extends XposedModule {
             H.info("event=param_api class=" + param.getClass().getName()
                     + " methods=" + R.describeMethods(param.getClass()));
             H.info("event=target_package package=" + target + " app=" + Config.appLabel(target));
+            // A stale build on the device looks exactly like a logic bug in the logs, so the
+            // running version is written out and the very next question is always answerable.
+            H.info("event=module_build version=" + versionName());
 
             Context context = ContextFinder.find(loader, target);
             if (context != null) {
@@ -104,13 +107,27 @@ public final class MainHook extends XposedModule {
      * Polls for the app context until it exists. configure() is guarded by a CAS, so whichever of
      * this and the two hooks arrives first wins and the others become no-ops.
      */
+    /**
+     * Reads the running build's version straight out of the package, so a stale APK on the device
+     * can never again be mistaken for a logic bug in the logs.
+     */
+    private static String versionName() {
+        try {
+            return MainHook.class.getPackage().getImplementationVersion();
+        } catch (Throwable unavailable) {
+            return "unknown";
+        }
+    }
+
     private void startContextRetry(final ClassLoader loader, final String target) {
+        H.info("event=context_retry_entered target=" + target);
         Thread worker = new Thread(new Runnable() {
             @Override public void run() {
                 for (int attempt = 1; attempt <= 60; attempt++) {
                     try {
                         Thread.sleep(500L);
                     } catch (InterruptedException stopped) {
+                        H.warn("event=context_retry_interrupted attempt=" + attempt);
                         return;
                     }
                     Context found;
@@ -131,6 +148,7 @@ public final class MainHook extends XposedModule {
         worker.setDaemon(true);
         try {
             worker.start();
+            H.info("event=context_retry_started");
         } catch (Throwable error) {
             H.warn("event=context_retry_start_failed " + H.describe(error));
         }
