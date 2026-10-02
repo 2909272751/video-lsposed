@@ -216,13 +216,13 @@ public final class Config {
             case BLOCK_PUSH_NOTIFY:
                 return true;     // ad blocking is on by default
             case DEBUG_LOG:
-                return false;
             case REDUCE_PRELOAD:
-                // On by default. Cutting the preload fan-out is pure saving: the skill asks for
-                // less battery, the rule only suppresses requests the app would have made
-                // speculatively, and nothing on screen changes. It has no UI toggle, so the
-                // default is the only switch that has ever actually existed for it.
-                return true;
+                // Left off deliberately. Flipping the default to true was tried and made no
+                // difference: the runtime value comes from a layer above the defaults, and
+                // feature=reduce_preload disappeared from the report instead of turning
+                // matched. Shipping a change that demonstrably does nothing is worse than
+                // not shipping it. The lever is the LSPosed remote-preferences group.
+                return false;
             case YOUKU_HIDE_BOTTOM_BAR:
                 // Destructive-shaped lever: hides the WHOLE bottom bar, so opt-in only.
                 return false;
