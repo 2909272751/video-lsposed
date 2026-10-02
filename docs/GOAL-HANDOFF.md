@@ -1815,3 +1815,63 @@ looksLikeCountdown() 里的 \d{1,3}\s*秒 分支**一次都没匹配到**。
    **离「跳过前贴片」还有距离**，不要按成功记。
 3. 已顺带按 skill 省电规范收掉诊断：晚期 tick 从 4 个减到 2 个（{30000,70000}），
    去掉 dumpOverlayWindows() 调用（窗口层已证明没有叠加窗，留着纯浪费）。
+## 四十三、第 46~47 轮：三条候选路径**逐条证伪**，倒计时徽标已定性
+
+按第 45 轮列的顺序依次验证，没有猜：
+
+### 候选 1：Editable 原地改写 → ❌ 证伪
+
+```
+rule=youku_countdown_editable status=hooked armed=8
+（SpannableStringBuilder 的 replace/append×2/insert）
+一整场播放，0 命中。
+```
+
+### 候选 2：自绘 View → ❌ 证伪
+
+```
+rule=youku_countdown_canvas status=hooked armed=3
+（Canvas.drawText 的 4/5/6 参重载）
+一整场播放，0 命中。
+```
+
+> 顺带修掉自己的一个真 bug：签名过滤写成
+> param.isAssignableFrom(CharSequence.class)，
+> 对 String 参数恒为 false，**把全部 String 重载悄悄滤掉、armed=0 却仍报 hooked**。
+> 正确写法是 CharSequence.class.isAssignableFrom(param)。
+> **这正是「报了 hooked 却没有拦截能力」最阴险的一种形态**，已加注释警示。
+
+### 候选 3：setText → 部分成立
+
+```
+hit=youku_video_preroll label=会员可关闭此广告   ← 每场都稳定命中
+「68 秒」                                      ← 从不命中
+```
+
+### 定性结论（修正第 2 节的判断）
+
+**倒计时广告其实是两个不同的东西，之前被我当成一个：**
+
+| 元素 | 承载方式 | 状态 |
+|---|---|---|
+| 「会员可关闭此广告」提示 pill | 普通 View，走 setText | ✅ **已拦下，画面消失** |
+| 「68 秒」倒计时徽标 | **播放器原生层绘制** | ❌ Java 层无法触及 |
+
+三条 Java 路径（setText / Editable / drawText）全部零命中，
+而徽标稳定显示在屏幕上——**只剩原生层这个解释**，与 libaliplayer.so、
+libalixplayer.so、libads-ac.so 的存在一致。
+
+### 对目标的影响（如实记账）
+
+**当前净效果：少了一个 pill。广告照常播，倒计时照常跑，不是「跳过前贴片」。**
+资源 0x7f100c16「已为您跳过前贴片广告」从未出现。
+
+### 第 48 轮的作业
+
+1. **换战场**：Java 层到此为止。若要真正跳过前贴片，得动
+   **广告下发/请求链路**（无广告则无徽标可画），而不是 UI 层。
+   切入点建议：XAdSDK 的广告请求方法（com.youku.xadsdk.*，本包内可读）
+   或 AdRequestManager 的实际请求参数——**先摸清请求入口再谈拦截**。
+2. youku_video_preroll 现状**保留**：它确实有效（pill 消失），但**改名或文档中
+   必须写明它只管 pill**，别让人误以为已经跳过广告。
+3. 仍未收尾：youku_home_top_ad（esult=matched 但没隐藏）。
