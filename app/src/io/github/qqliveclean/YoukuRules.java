@@ -442,21 +442,21 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
             return;
         }
         android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
-        // The detail page is where the countdown ad lives, and it reached this method without ever
-        // getting the 500 ms pass, so it gets its own dump schedule rather than relying on one.
-        if (!"com.youku.kuflix.RootPageActivity".equals(activity.getClass().getName())) {
+        // The feed sweep runs on every activity, RootPageActivity included. The home feed IS
+        // RootPageActivity, and an earlier attempt parked this inside the exclusion below and
+        // therefore skipped exactly the page it was written for - the pass ran, reported
+        // nothing, and looked identical to a rule that never fires.
+        handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                FeedAdCardRules.sweep(activity, true);
+            }
+        }, 1500);
+        for (final int offset : new int[] {4000, 8000, 12000, 16000}) {
             handler.postDelayed(new Runnable() {
                 @Override public void run() {
-                    
+                    FeedAdCardRules.sweep(activity, true);
                 }
-            }, 1500);
-            for (final int offset : new int[] {4000, 8000, 12000, 16000}) {
-                handler.postDelayed(new Runnable() {
-                    @Override public void run() {
-                        
-                    }
-                }, offset);
-            }
+            }, offset);
         }
         // Every pass reports whether it ran and what it was asked to do. De-duplication has hidden
         // the truth too often in this project, and a pass that runs and finds nothing is

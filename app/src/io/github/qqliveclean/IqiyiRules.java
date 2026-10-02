@@ -642,18 +642,21 @@ final class IqiyiRules {
                             @Override public void run() {
                                 hideHomeTopAd(activity);
                                 hideHomeMemberBanner(activity);
+                                FeedAdCardRules.sweep(activity, false);
                             }
                         }, 3000);
                         if (settings.iqiyiHideHomeTopAd) handler.postDelayed(new Runnable() {
                             @Override public void run() {
                                 hideHomeTopAd(activity);
                                 hideHomeMemberBanner(activity);
+                                FeedAdCardRules.sweep(activity, false);
                             }
                         }, 5000);
                         if (settings.iqiyiHideHomeTopAd) handler.postDelayed(new Runnable() {
                             @Override public void run() {
                                 hideHomeTopAd(activity);
                                 hideHomeMemberBanner(activity);
+                                FeedAdCardRules.sweep(activity, false);
                             }
                         }, 10000);
                     }
