@@ -1875,3 +1875,55 @@ libalixplayer.so、libads-ac.so 的存在一致。
 2. youku_video_preroll 现状**保留**：它确实有效（pill 消失），但**改名或文档中
    必须写明它只管 pill**，别让人误以为已经跳过广告。
 3. 仍未收尾：youku_home_top_ad（esult=matched 但没隐藏）。
+## 四十四、第 48 轮：**XAdSDK 找到了**，com.alimm.xadsdk 按广告位分请求类
+
+### 定位过程（静态，可复现）
+
+1. grep 'Lcom/youku/xadsdk/' 命中 8 个 dex——但那只是**字符串引用**，不代表类定义。
+2. dexdump -l 是 layout 不是类名列表（踩坑），改用 dexdump -n（紧凑模式）。
+3. 逐个 dex 统计 Class descriptor : 'Lcom/alimm/xadsdk/——
+
+   ``
+   classes7.dex  alimm类=71      ← 只有它定义，其余 13 个 dex 全是 0
+   ``
+
+### 真正的包名是 com.alimm.xadsdk（阿里妈妈），不是 com.youku.xadsdk
+
+com/youku/xadsdk/ 在包里只有引用；com/alimm/xadsdk/ 才是实现。
+**之前按 com.youku.xadsdk.* 猜锚点，方向就错了**——这解释了为什么那些探针
+（com.youku.xadsdk.ui.component.AdVideoView）一个都没触发。
+
+### 关键结构：按广告位分类型的请求类（71 个类里的核心）
+
+```
+com/alimm/xadsdk/request/builder/PasterAdRequestInfo        ← 前贴片，就是目标
+com/alimm/xadsdk/request/builder/PopAdRequestInfo           ← 弹窗
+com/alimm/xadsdk/request/builder/SplashAdRequestInfo        ← 开屏
+com/alimm/xadsdk/request/builder/PauseAdRequestInfo         ← 暂停
+com/alimm/xadsdk/request/builder/BannerAdRequestInfo
+com/alimm/xadsdk/request/builder/PlayerAdRequestInfo        ← 上面几类的父类
+com/alimm/xadsdk/request/builder/RequestInfo                ← 持有 mAdType(int) 广告位
+```
+
+RequestInfo 字段含 mAdType、mContext、mExtraParams、mUsePostMethod、cacheDir。
+
+### 本轮探针结果（诚实记账）
+
+新增 youku_ad_slot_type（hook RequestInfo#getAdType/setAdType）：
+
+```
+rule=youku_ad_slot_type status=hooked armed=2
+一整场播放，0 命中。
+```
+
+**说明这两个方法名不是真实入口**（很可能已被 R8 改名，字段直接读，没走访问器）。
+**目前仍处在「只读不拦」阶段**，没有对广告请求做任何拦截。
+
+### 第 49 轮的作业（比上一轮更具体）
+
+1. **改 hook 构造器**：PasterAdRequestInfo#<init>()V 在 dex 里确认存在。
+   构造前贴片请求必然要 new 它，**hook 构造器必然触发**，
+   这是验证「前贴片是不是走这条链路」最稳的一步。
+2. 命中后再沿 RequestInfo.mExtraParams / mAdType 往上找真正的下发调用点，
+   **拿到真实调用栈再决定拦截位置**——不要再按名字猜。
+3. 一并收尾：youku_home_top_ad（esult=matched 但没隐藏）。
