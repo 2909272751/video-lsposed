@@ -66,7 +66,7 @@ if ($env:QLC_BUILD_TMP) {
 $stage = Join-Path $stageParent ('qlc-' + [guid]::NewGuid().ToString('N'))
 $dist = Join-Path $app 'dist'
 $keystore = Join-Path $app 'debug.keystore'
-$output = Join-Path $dist 'video-clean-v0.3.42.apk'
+$output = Join-Path $dist 'video-clean-v0.3.43.apk'
 $env:JAVA_HOME = $jdk
 $env:Path = (Join-Path $jdk 'bin') + ';' + $env:Path
 

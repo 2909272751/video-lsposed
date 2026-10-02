@@ -79,6 +79,10 @@ final class YoukuRules {
     private YoukuRules() {}
 
     static void install(MainHook module, ClassLoader loader, Config.Settings settings) {
+        // Round 45 logged no rule=youku_* registration line at all while the lines that follow
+        // this call in MainHook were present, which means the registrations ran but their log
+        // went missing. Two markers turn "somewhere in install" into a measurable span.
+        H.info("event=youku_install_begin");
         // ---- S-2: the app's own master switch (primary, in report order) ----
         if (settings.youkuBlockSplash) {
             installSplashSwitch(module, loader, true);
@@ -144,6 +148,7 @@ final class YoukuRules {
         reportAdRequestGateWithdrawn();
         // T-1 (top channel bar) is reported from installBottomTabFilter: it runs on the
         // same Activity-resume pass as the bottom-bar filter and works on the View layer.
+        H.info("event=youku_install_done");
     }
 
     /** 11.2.15 inlines HomeBottomNav.b(List); trim only its five rendered buttons. */
@@ -308,7 +313,10 @@ static void scheduleUiPasses(final Context context, final Config.Settings settin
         }
         // The countdown ad is on screen long after the last pass: it runs for up to 110 seconds.
         // These ticks only sample the tree, they never re-run the rules, so they stay cheap.
-        for (final int late : new int[] {20000, 30000, 45000, 70000}) {
+        // The countdown question is answered - the label arrives through setText - so the tree
+        // samples no longer earn their keep. Two late samples are enough to confirm a rule,
+        // and the skill asks for less battery and less noise than that costs.
+        for (final int late : new int[] {30000, 70000}) {
             handler.postDelayed(new Runnable() {
                 @Override public void run() {
                     Activity front = findLiveActivity(context);
@@ -661,7 +669,6 @@ private static Object readField(java.lang.reflect.Field field, Object owner) {
         }
         TREE_DUMPS.put(name, count + 1);
         dumpViewTree(activity, "youku_viewtree");
-        dumpOverlayWindows(name);
     }
 
     /**
