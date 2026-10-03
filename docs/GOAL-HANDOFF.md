@@ -3474,3 +3474,42 @@ revision 标记仍然留在本机缓存，否则关键词过滤会被静默清�
 `didi`、`heytap`、`qqmusic`、`taobao`、`weibo` → 各自的包，无一缺失。
 旧模块 `io.github.heytapmarketclean` 已卸载，避免两条规则同时生效导致结论无法归因。
 作用域现为 9 个包。
+
+---
+
+## 2026-10-03 商店规则集适配 26.9.4_CN（miss 4 → 1）
+
+方法：把商店 base.apk 从设备拉下来（88.8 MB，10 个 dex），用 build-tools 自带的
+`dexdump -d` 找新锚点，**按签名而不是按混淆名**去搜。不靠猜。
+
+| 特性 | 旧锚点（26.5.2） | 新锚点（26.9.x） | 定位依据 |
+| --- | --- | --- | --- |
+| float_ad | `a.a.a.qx5.Ԩ(FloatShowType)Z` | `a.a.a.ji6.Ԩ(FloatShowType)Z` | 方法名与签名都没变，只有宿主类轮转 |
+| msp_ad | `com.heytap.msp.sdk.common.dialog.DialogHelper` | `com.heytap.msp.guide.dialog.DialogHelper` | `sdk.common.dialog` 包被并进 `guide.dialog`；四个方法名实测仍在 classes6.dex |
+| cta_dialog | `a.a.a.hg3.showCTA(...)V` | `a.a.a.dy3.showCTA(Context, zx3)V` | 先定位到 `a.a.a.gu7.showCTA`，但它是 `PUBLIC ABSTRACT`——Xposed 挂不了抽象方法，实现落在 `dy3` |
+
+`SCHEMA` 7 → 10：锚点变了必须让锚点缓存失效重探，否则还会用旧锚点。
+只加 app 作用域、不动 SCHEMA 的话，会继续用缓存里的旧类名。
+
+### 一个必须记住的读日志陷阱
+
+中途出现一次「只有 12 项上报、少了 3 项」的假回归。真相是
+**modules_*.log 把该进程最早一批行丢了**（该模块源码注释里早就写了这个已知行为，
+并为此留了 logcat 第二通道）。改用 `logcat -c` → 启动 → 等 35 秒 → `logcat -d`
+才拿到完整的 15 项。
+
+> 少几行日志不等于少装了几条规则。判断回归前先确认观测手段本身没丢数据。
+
+另外发现一个显示缺陷：`why=` 字段会在 `boot_guide` 失败后**串到后面几项**
+（`feature=bottom_bar result=matched why=...a.a.a.ue8...`）。结果字段是对的，
+但排障时会被误导，属独立的显示 bug，未修。
+
+### 最终（26.9.4_CN，schema=10）
+
+matched 12 / miss 1 / off 2
+- matched：float_ad、ai_bubble、cta_dialog、msp_ad、bottom_bar、top_banner、
+  mine_uninstall、mine_clean、mine_health、mine_banner、mine_recommend、mine_vip
+- miss：**boot_guide** —— 全包搜 `(Context)Intent` 签名后，`a/a/a/` 下已无匹配的引导页
+  Intent 工厂（候选只剩 getMainTabActivityIntent / getAppHealthReportIntent 等），
+  该规则的结构在本版本疑似已改写，需要重新分析，不能靠搜签名猜。
+- off（设置默认关）：mine_upgrade、mine_download

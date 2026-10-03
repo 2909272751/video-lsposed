@@ -18,7 +18,7 @@ final class Config {
      * 规则结构版本：只有规则语义变化时才 +1（会让锚点缓存失效重探）。
      */
     /** 规则结构版本：规则语义变了就 +1，缓存 token 随之失效、重新探测。 */
-    static final String SCHEMA = "7";
+    static final String SCHEMA = "10";
 
     /** RemotePreferences 组名。 */
     static final String GROUP = "io.github.heytapmarketclean_settings";

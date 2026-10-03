@@ -43,7 +43,7 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
 
     // ── 锚点：类名与方法名都来自 26.5.2_CN 的 DEX 实测（混淆名以 unicode 转义写） ──
     /** 悬浮广告优先级闸门（Kotlin 单例 FloatJumpPriorManager）。 */
-    private static final String CLS_FLOAT_PRIOR = "a.a.a.qx5";
+    private static final String CLS_FLOAT_PRIOR = "a.a.a.ji6";
     private static final String M_FLOAT_CANSHOW = "\u0528";
     private static final String T_FLOAT_SHOWTYPE = "com.nearme.uikit.widget.floatJump.FloatShowType";
 
@@ -53,7 +53,9 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
     private static final String T_EFFECTIVE_VIEW = "com.oplus.anim.EffectiveAnimationView";
 
     /** CTA 活动弹窗管理器（非混淆名）。 */
-    private static final String CLS_CTA = "a.a.a.hg3";
+    // 26.9.x：a.a.a.gu7 上的 showCTA 变成了抽象方法（Xposed 不能挂抽象方法），
+    // 真正的实现落在 a.a.a.dy3，签名同为 (Context, a.a.a.zx3)V。
+    private static final String CLS_CTA = "a.a.a.dy3";
     private static final String M_CTA_SHOW = "showCTA";
 
     // ── msp 营销弹窗（用户反馈「打开软件会弹窗」的拦截面）────────────────
@@ -64,7 +66,7 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
     // dex 实测：com.heytap.msp.sdk.common.dialog.DialogHelper 是弹窗调度中枢，
     // create/show/dismiss 一整套；广告弹窗体是 CommonDialog，三个构造器全是
     // (Activity, 图片地址, 文案, 跳转链接, ..., 回调) —— 典型广告素材。
-    private static final String CLS_MSP_HELPER   = "com.heytap.msp.sdk.common.dialog.DialogHelper";
+    private static final String CLS_MSP_HELPER   = "com.heytap.msp.guide.dialog.DialogHelper";
     private static final String M_MSP_SHOW_AD    = "showDownloadDialog";
     private static final String M_MSP_NEED_KEEP = "needShowRetentionDialog";
     private static final String M_MSP_SHOW_TIPS = "showTipsDialog";
