@@ -3438,3 +3438,39 @@ XposedService 发 SendBinder，onServiceBind 永不触发。微博日志里的
 revision 标记仍然留在本机缓存，否则关键词过滤会被静默清空。
 
 真机：微博 `Host=16.10.0 (8202); hooks=24; installMs=34; 模块设置`。
+
+---
+
+## 2026-10-03 补齐第五个模块：OPPO/欢太 软件商店
+
+之前只合并了四个独立模块，漏掉了 `heytap-market-clean`（GitHub `2909272751/heytap-market-clean`，
+包名 `io.github.heytapmarketclean`，作用域 `com.heytap.market`）。它在本机一直独立装着。
+查 GitHub 用户名下的仓库清单才确认这是第六个自研模块、也是唯一一个漏网的。
+
+22 个特性项，2378 行，是目前最大的一个规则集。合并时踩到的坑：
+
+1. **包名只改了 MainHook**，同目录的 Config/StatusProvider/StatusReceiver 三个文件仍是旧包名，
+   于是 100 个编译错误全指向「找不到符号 Config」。
+2. **旧 API 回调 `onPackageLoaded`**：libxposed API 102 只回调 `onPackageReady`，
+   那条路从来不会执行。它原本负责把包名记进 `loadedPackage`，删掉后 `onPackageReady`
+   直接用 `Config.TARGET`。
+3. **`Config.handles()` 白名单**才是真正的分发闸门。只往 LSPosed 作用域加包、
+   又在 `delegateSuiteFamily` 加了 else-if，日志里照样只有 `event=module_loaded`，
+   一行 `suite_dispatch` 都没有——和没装一样。作用域、白名单、分发三处都要改。
+4. 脚本按行号批量插入时，把 heytap 的 else-if 插进了 weibo 分支内部，
+   结果商店永远匹配不到。改回结构化编辑。
+
+### 真机结果（26.9.x，schema=7）
+
+`resource ids resolved: 21/21`，15 项出结果：matched 9 / miss 4 / off 2。
+- matched：ai_bubble、bottom_bar、top_banner、mine_uninstall、mine_clean、mine_health、
+  mine_banner、mine_recommend、mine_vip
+- miss（混淆锚点跨版本失效，属原有适配缺口）：float_ad、cta_dialog、msp_ad、boot_guide
+- off（设置默认关）：mine_upgrade、mine_download
+
+### 回归
+
+合并后四家重新实跑，分发全部正常：
+`didi`、`heytap`、`qqmusic`、`taobao`、`weibo` → 各自的包，无一缺失。
+旧模块 `io.github.heytapmarketclean` 已卸载，避免两条规则同时生效导致结论无法归因。
+作用域现为 9 个包。

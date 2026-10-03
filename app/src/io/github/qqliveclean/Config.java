@@ -42,10 +42,13 @@ public final class Config {
     public static final String PACKAGE_TAOBAO = "com.taobao.taobao";
     public static final String PACKAGE_XIANYU = "com.taobao.idlefish";
     public static final String PACKAGE_WEIBO = "com.sina.weibo";
+    /** OPPO/欢太 软件商店，来自独立模块 heytap-market-clean。 */
+    public static final String PACKAGE_HEYTAP = "com.heytap.market";
 
     /** Every package this module installs rules for. */
     public static final String[] PACKAGES = {PACKAGE, PACKAGE_YOUKU, PACKAGE_IQIYI,
-            PACKAGE_QQMUSIC, PACKAGE_DIDI, PACKAGE_TAOBAO, PACKAGE_XIANYU, PACKAGE_WEIBO};
+            PACKAGE_QQMUSIC, PACKAGE_DIDI, PACKAGE_TAOBAO, PACKAGE_XIANYU, PACKAGE_WEIBO,
+            PACKAGE_HEYTAP};
 
     /** True for a package this module has a rule set for. */
     static boolean handles(String packageName) {

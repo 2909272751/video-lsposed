@@ -32,11 +32,12 @@ public final class FamilySettings {
     public static final String DIDI = "didi";
     public static final String TAOBAO = "taobao";
     public static final String WEIBO = "weibo";
+    public static final String HEYTAP = "heytap";
 
-    public static final String[] FAMILIES = {QQMUSIC, DIDI, TAOBAO, WEIBO};
-    private static final String[] PREFIXES = {"qm_", "dd_", "tb_", "wb_"};
+    public static final String[] FAMILIES = {QQMUSIC, DIDI, TAOBAO, WEIBO, HEYTAP};
+    private static final String[] PREFIXES = {"qm_", "dd_", "tb_", "wb_", "hp_"};
 
-    public static final String[] FAMILY_LABELS = {"QQ 音乐", "滴滴出行", "淘宝 / 闲鱼", "微博"};
+    public static final String[] FAMILY_LABELS = {"QQ 音乐", "滴滴出行", "淘宝 / 闲鱼", "微博", "OPPO 软件商店"};
 
     private static final String[][] KEYS = {
             {"block_splash", "reduce_preload", "tab_video", "tab_ksong", "tab_star", "tab_my",
@@ -51,6 +52,14 @@ public final class FamilySettings {
              "feed_headers", "original_images", "clipboard_guard", "copy_clean", "mine_ads", "mine_wallet",
              "mine_tasks", "mine_creator", "mine_recommend", "flow_ads", "mine_vip_ads",
              "video_preroll_ads", "video_overlay_ads", "carousel_ads"},
+            // heytapmarketclean.Config.key() appends "_enabled" to every feature name.
+            {"float_ad_enabled", "ai_bubble_enabled", "cta_dialog_enabled", "msp_ad_enabled",
+             "boot_guide_enabled", "bottom_bar_enabled", "top_banner_enabled", "nav_badge_enabled",
+             "mine_upgrade_enabled", "mine_uninstall_enabled", "mine_download_enabled",
+             "mine_clean_enabled", "mine_health_enabled", "mine_banner_enabled",
+             "mine_recommend_enabled", "mine_vip_enabled",
+             "noti_recommend_enabled", "noti_push_high_enabled", "noti_tool_enabled",
+             "noti_upgrade_enabled", "noti_self_enabled", "noti_scan_enabled"},
     };
 
     private static final String[][] LABELS = {
@@ -69,6 +78,12 @@ public final class FamilySettings {
              "隐藏我的钱包卡片", "隐藏我的任务卡片", "隐藏创作者中心卡片", "隐藏我的页面用户推荐",
              "过滤新版页面商业广告", "隐藏个人中心会员促销", "过滤视频插播广告片段",
              "隐藏视频广告浮层", "过滤发现页轮播广告"},
+            {"悬浮广告", "AI 搜索引导气泡", "活动弹窗（CTA）", "营销弹窗（msp）", "开机必备引导页",
+             "底栏推广入口", "顶部横幅推广位", "底栏红点角标",
+             "「我的」待更新", "「我的」应用卸载", "「我的」下载管理", "「我的」存储空间清理",
+             "「我的」应用健康状态", "「我的」热门好礼横幅", "「我的」继续探索推荐卡", "「我的」游戏 VIP 卡",
+             "通知栏热门内容推荐", "通知栏热门内容推送", "通知栏加速/清理推广",
+             "通知栏可更新应用提醒", "通知栏商店自身更新", "通知侦察（不拦截，仅记录）"},
     };
 
     /**
@@ -84,6 +99,10 @@ public final class FamilySettings {
             {true, true, true, false, true, true, false, false, true, true, false, true},
             {true, true, true, true},
             {},
+            // heytapmarketclean.Config.FEATURE_DEFAULT: 广告类默认开，「我的」页与通知类逐项默认。
+            {true, true, true, true, true, true, true, true,
+             false, true, false, true, true, true, true, true,
+             true, true, true, false, false, true},
     };
 
     private FamilySettings() {}

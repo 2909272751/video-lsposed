@@ -184,6 +184,9 @@ public final class MainHook extends XposedModule {
         } else if (Config.PACKAGE_WEIBO.equals(target)) {
             family = new io.github.qqliveclean.apps.weibo.MainHook(this);
             label = "weibo";
+        } else if (Config.PACKAGE_HEYTAP.equals(target)) {
+            family = new io.github.qqliveclean.apps.heytapmarketclean.MainHook(this);
+            label = "heytap";
         } else {
             return false;
         }
