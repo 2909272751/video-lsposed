@@ -55,6 +55,11 @@ public final class H {
         appContext = context;
     }
 
+    /** Needed by the settings bridge, which is installed before install() gets a loader. */
+    public static Context appContext() {
+        return appContext;
+    }
+
     public static void setCompat(boolean ok, String detail) {
         compatOk = ok;
         compatDetail = detail == null ? "" : detail;

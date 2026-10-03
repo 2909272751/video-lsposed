@@ -31,8 +31,8 @@ public final class MainActivity extends Activity {
     private final Map<String, Boolean> defaults = new LinkedHashMap<>();
     private TextView status;
     private boolean refreshing;
-    private final ScrollView[] pages = new ScrollView[3];
-    private final Button[] pageButtons = new Button[3];
+    private final ScrollView[] pages = new ScrollView[4];
+    private final Button[] pageButtons = new Button[4];
     private int selectedPage;
 
     @Override public void onCreate(Bundle state) {
@@ -65,7 +65,7 @@ public final class MainActivity extends Activity {
         LinearLayout navigation = new LinearLayout(this);
         navigation.setOrientation(LinearLayout.HORIZONTAL);
         navigation.setPadding(0, dp(12), 0, dp(8));
-        String[] names = {"腾讯视频", "优酷", "爱奇艺"};
+        String[] names = {"腾讯视频", "优酷", "爱奇艺", "其他"};
         for (int index = 0; index < names.length; index++) {
             final int selected = index;
             Button button = new Button(this);
@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
         root.addView(navigation);
 
         FrameLayout pageHost = new FrameLayout(this);
-        LinearLayout[] pageBodies = new LinearLayout[3];
+        LinearLayout[] pageBodies = new LinearLayout[4];
         for (int index = 0; index < pages.length; index++) {
             ScrollView scroll = new ScrollView(this);
             scroll.setFillViewport(true);
@@ -203,9 +203,28 @@ public final class MainActivity extends Activity {
                 "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
         body.addView(qiyiNotifyCard);
 
+        // The four rule sets that used to ship as four separate APKs. Their keys are published
+        // under a per-family prefix, so a toggle here can never be confused with a video-app one -
+        // QQ音乐 and the host both want "block_splash".
+        body = pageBodies[3];
+        TextView mergedHint = text("这些应用原来需要分别安装各自的模块，现在统一在这里设置。", 13, MUTED, false);
+        mergedHint.setPadding(0, 0, 0, dp(10));
+        body.addView(mergedHint);
+        for (int familyIndex = 0; familyIndex < FamilySettings.FAMILIES.length; familyIndex++) {
+            String family = FamilySettings.FAMILIES[familyIndex];
+            section(body, FamilySettings.FAMILY_LABELS[familyIndex]);
+            LinearLayout familyCard = card();
+            String[] familyKeys = FamilySettings.keysOf(family);
+            String[] familyLabels = FamilySettings.labelsOf(family);
+            for (int keyIndex = 0; keyIndex < familyKeys.length; keyIndex++) {
+                toggleFamily(familyCard, family, familyKeys[keyIndex], familyLabels[keyIndex],
+                        FamilySettings.defaultFor(family, familyKeys[keyIndex]));
+            }
+            body.addView(familyCard);
+        }
+
         body = pageBodies[0];
-        section(body, "诊断与恢复");
-        LinearLayout debugCard = card();
+        section(body, "诊断与恢复");        LinearLayout debugCard = card();
         addNote(debugCard, "顶部的「兼容结果」可查看每项规则是否安装、是否实际触发。", 12);
         toggle(debugCard, Config.DEBUG_LOG, "记录详细日志",
                 "遇到漏拦截时再开启，便于定位", false);
@@ -310,8 +329,11 @@ public final class MainActivity extends Activity {
 
     /** The app whose settings page is showing; the payload is delivered to it on every write. */
     private String currentPagePackage() {
-        return selectedPage == 0 ? Config.PACKAGE
-                : selectedPage == 1 ? Config.PACKAGE_YOUKU : Config.PACKAGE_IQIYI;
+        if (selectedPage == 0) return Config.PACKAGE;
+        if (selectedPage == 1) return Config.PACKAGE_YOUKU;
+        // The merged rule sets read the provider once per process launch, so there is no single
+        // target app to hand a payload to; null just skips that delivery step.
+        return selectedPage == 2 ? Config.PACKAGE_IQIYI : null;
     }
 
     private String versionText(String packageName, int verifiedCode) {        try {
@@ -373,6 +395,16 @@ public final class MainActivity extends Activity {
         parent.addView(row);
         switches.put(key, control);
         defaults.put(key, initial);
+    }
+
+    /**
+     * Same switch, but stored under the family prefix. refresh() reads whatever key is in the
+     * switches map, so passing the prefixed key through is all that is needed to make the stored
+     * value round-trip.
+     */
+    private void toggleFamily(LinearLayout parent, String family, String key, String title,
+                              boolean initial) {
+        toggle(parent, FamilySettings.prefixed(family, key), title, null, initial);
     }
 
     private void section(LinearLayout body, String title) {

@@ -117,7 +117,7 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
         log(Log.INFO, TAG, "[" + BUILD + "] checking hooks for " + context.getPackageName()
                 + " " + info.versionName + " (" + info.versionCode + ")");
 
-        SharedPreferences prefs = getRemotePreferences(Config.GROUP);
+        SharedPreferences prefs = io.github.qqliveclean.FamilySettings.prefs(context, io.github.qqliveclean.FamilySettings.TAOBAO);
         final boolean isTaobao = Config.TAOBAO.equals(context.getPackageName());
 
         probe("splash", read(prefs, Config.SPLASH), new Runnable() {

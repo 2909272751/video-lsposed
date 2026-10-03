@@ -8,6 +8,17 @@
         <package android:name="com.tencent.qqlive" />
         <package android:name="com.youku.phone" />
         <package android:name="com.qiyi.video" />
+        <!--
+          The four rule sets merged in from standalone modules read their settings through this
+          module's ConfigProvider. Without them here, package visibility hides the provider from
+          those apps and every one of their switches silently falls back to its built-in default -
+          which is exactly what happened on the first attempt.
+        -->
+        <package android:name="com.tencent.qqmusic" />
+        <package android:name="com.sdu.didi.psnger" />
+        <package android:name="com.taobao.taobao" />
+        <package android:name="com.taobao.idlefish" />
+        <package android:name="com.sina.weibo" />
     </queries>
     <application
         android:name=".App"

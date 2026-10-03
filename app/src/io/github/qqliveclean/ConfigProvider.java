@@ -41,6 +41,11 @@ public final class ConfigProvider extends ContentProvider {
         for (String key : Config.EXPOSED_KEYS) {
             bundle.putBoolean(key, preferences.getBoolean(key, Config.defaultFor(key)));
         }
+        // Settings of the rule sets merged in from the former standalone modules. They share this
+        // same flat store under the qm_/dd_/tb_/wb_ prefixes, so they need their own publish pass.
+        for (String key : Config.EXPOSED_KEYS_MERGED) {
+            bundle.putBoolean(key, preferences.getBoolean(key, Config.defaultFor(key)));
+        }
         return bundle;
     }
 

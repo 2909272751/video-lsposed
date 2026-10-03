@@ -102,7 +102,7 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
             if (scanOverlay.needsPrompt()) installActivityObserver();
             report("running", "", "", "");
             log(Log.INFO, TAG, "checking compatible hooks for QQ Music " + version);
-            SharedPreferences preferences = getRemotePreferences(Config.GROUP);
+            SharedPreferences preferences = io.github.qqliveclean.FamilySettings.prefs(context, io.github.qqliveclean.FamilySettings.QQMUSIC);
             boolean blockSplash = Config.read(preferences, Config.BLOCK_SPLASH, true);
             probe("cold", blockSplash, new Runnable() { @Override public void run() { installColdSplash(targetLoader); } });
             probe("hot", blockSplash, new Runnable() { @Override public void run() { installHotSplash(targetLoader); } });

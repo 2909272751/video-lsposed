@@ -3360,3 +3360,54 @@ QQ音乐规则集依赖 DexKit，合并后要一并带进来，且是**编译期
 
 更新已安装模块的 APK **不会**刷新 LSPosed 的作用域（它存在 `modules_config.db` 里）。
 本轮直接把 5 个新包写进了 `scope` 表（等价于在 LSPosed 界面里勾选），**改完必须重启**才生效。
+
+---
+
+## 2026-10-03 补齐统一设置页（原第 5 条缺口）
+
+### 问题
+
+四套规则集合并后设置项「接不上」：它们各自调用 `getRemotePreferences(GROUP)`，
+而这条通道在本机上根本不工作 —— ConfigProvider 的注释早就写明 lspd 从不对本模块的
+XposedService 发 SendBinder，onServiceBind 永不触发。微博日志里的
+`本机缓存（设置连接未成功，请先打开模块）` 就是这条通道失效的直接证据。
+
+### 改动
+
+- 新增 `FamilySettings`：把 provider 返回的 Bundle 包装成只读 SharedPreferences，
+  并做前缀映射。读取端仍是 SharedPreferences，所以三个调用点各只改一行。
+- **键必须带前缀**（`qm_`/`dd_`/`tb_/wb_`）。宿主的键平铺在同一份 SharedPreferences 里，
+  而 QQ音乐 的 `block_splash`/`reduce_preload` 与宿主**同名**；不加前缀的话，
+  QQ音乐的开关会被视频应用的设置驱动，而且两边都看不出异常。
+- `Config.EXPOSED_KEYS_MERGED` + `ConfigProvider.call()` 追加下发；`Config.defaultFor`
+  增加前缀分支。`MainActivity` 增加第 4 个页签「其他」，按应用分组列出全部开关。
+  `currentPagePackage()` 对该页返回 null（这四家是每次进程启动读一次 provider，
+  没有单一目标应用需要投递）。
+
+### 关键坑：`<queries>` 漏了新增的四个应用
+
+第一次接线后开关写进去了（`qm_home_only_recommend = true` 确实出现在 XML 里），
+但规则集那边读回来的却是**各规则集自己的内置默认值**，一次 A/B 里
+`recognizer matched / preload off` 正好和预期相反。
+
+根因：`AndroidManifest.xml` 的 `<queries>` 只声明了三个视频应用。
+包可见性让 QQ音乐/滴滴/淘宝/微博 **看不到本模块的 ConfigProvider**，
+`content://io.github.qqliveclean.config` 调用被拦，于是全部静默退回默认值。
+补上五个包后行为立刻正确。
+
+**教训：写进存储成功 ≠ 目标进程读得到。包可见性这一层不看日志就不会发现。**
+
+### 验证（同一会话内，两次独立运行）
+
+| 设置 | QQ音乐 `home` 特征 |
+| --- | --- |
+| `qm_home_only_recommend = false` | `feature=home result=off` |
+| `qm_home_only_recommend = true` | 探针转为主动安装：`home method quick match missed; starting DexKit string scan` + `home fingerprint scan continues in background` |
+
+设置页 → 带前缀的键 → provider → 规则集 → 行为改变，整条链路打通。
+
+### 仍未解决
+
+- `home`（QQ音乐首页仅推荐）规则本身在 20.9.0.8 上还没匹配上，DexKit 兜底扫描仍在后台。
+  这是合并前就有的适配缺口，不是合并引入的。
+- 兼容报告里缺 `home` 这一行：探针在子线程继续跑，没回写结果行。

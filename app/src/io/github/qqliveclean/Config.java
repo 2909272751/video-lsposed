@@ -214,7 +214,17 @@ public final class Config {
             IQIYI_SHOW_FREE, IQIYI_SHOW_PLUS, IQIYI_SHOW_MEMBER,
     };
 
+    /**
+     * The merged rule sets' own keys, already prefixed. Kept separate from {@link #EXPOSED_KEYS}
+     * because they are not video-app switches and must never be shown on a video settings page.
+     */
+    public static final String[] EXPOSED_KEYS_MERGED = FamilySettings.exposedKeys();
+
     static boolean defaultFor(String key) {
+        // The four merged rule sets share this flat preference store, so their keys arrive
+        // prefixed (qm_/dd_/tb_/wb_). Without this branch a QQ音乐 toggle would inherit
+        // the value of the identically named video-app key.
+        if (FamilySettings.isFamilyKey(key)) return FamilySettings.defaultForPrefixed(key);
         switch (key) {
             case BLOCK_SPLASH:
             case BLOCK_SPLASH_PRELOAD:

@@ -122,7 +122,7 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
 
     private void install(ClassLoader loader) {
         SharedPreferences prefs = null;
-        try { prefs = getRemotePreferences(Config.GROUP); } catch (Throwable t) { H.warn("getRemotePreferences failed: " + t); }
+        try { prefs = io.github.qqliveclean.FamilySettings.prefs(H.appContext(), io.github.qqliveclean.FamilySettings.DIDI); } catch (Throwable t) { H.warn("family settings unavailable: " + t); }
         H.info("config source=" + (prefs != null ? "remote_prefs" : "defaults"));
         H.setSource(prefs != null ? "remote_prefs（设置页写入）" : "defaults（未读到设置，用默认值）");
 
