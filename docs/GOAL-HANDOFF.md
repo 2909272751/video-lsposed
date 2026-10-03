@@ -3425,3 +3425,16 @@ XposedService 发 SendBinder，onServiceBind 永不触发。微博日志里的
   标签为「广告净化」，旧四模块图标已从列表消失。
 - 设置页 uiautomator 实测文本：`广告净化` / `长视频、音乐、电商、出行、社交，统一在这里设置` /
   四个页签 `腾讯视频 / 优酷 / 爱奇艺 / 其他`。
+
+### 微博是最后一个没接上的
+
+合并后一直报「本机缓存（设置连接未成功，请先打开模块）」。它确实在调 provider，但指向的是
+**它自己旧模块的 authority**：`content://io.github.weiboclean.settings/state`。
+那个 provider 随着独立模块一起没了，所以每次调用都失败并静默回退到本机缓存。
+另两家（滴滴/淘宝）合并时改成了 `getRemotePreferences`，没留下这个死地址。
+
+改为与其余三家同一条 `FamilySettings` 桥接。注意 provider 只带布尔值，
+微博的三个自由文本键（keyword_rules / user_rules / location_rules）和它自己的
+revision 标记仍然留在本机缓存，否则关键词过滤会被静默清空。
+
+真机：微博 `Host=16.10.0 (8202); hooks=24; installMs=34; 模块设置`。

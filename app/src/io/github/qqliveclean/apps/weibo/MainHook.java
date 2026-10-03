@@ -54,8 +54,21 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
    version=info.versionName+" ("+info.getLongVersionCode()+")";
    fingerprint=info.lastUpdateTime+":"+info.getLongVersionCode()+":1";
   }catch(Exception ignored){}
-  try{options=c.getContentResolver().call(Config.URI,"settings",null,null);if(options==null)throw new IllegalStateException();
-   settingsSource="模块设置";saveSettings(options);
+  // Settings come from the one merged provider now. The old content://io.github.weiboclean
+  // .settings/state authority died with the standalone module, which is why this app kept
+  // reporting "设置连接未成功" while every other merged rule set worked.
+  try{
+   android.content.SharedPreferences wp=io.github.qqliveclean.FamilySettings.prefs(c,io.github.qqliveclean.FamilySettings.WEIBO);
+   if(wp==null)throw new IllegalStateException("no prefs");
+   options=new android.os.Bundle();
+   for(String key:Config.KEYS)options.putBoolean(key,wp.getBoolean(key,Config.defaultOn(key)));
+   // The provider only carries booleans. The keyword/user/region filters are free text with no
+   // settings UI yet, and revision is weibo's own cache marker, so both stay in the local copy.
+   android.os.Bundle cached=loadSettings();
+   for(String key:Config.TEXT_KEYS)options.putString(key,cached.getString(key,""));
+   options.putLong("revision",cached.getLong("revision",0));
+   settingsSource="模块设置";
+   saveSettings(options);
   }catch(Throwable e){options=loadSettings();settingsSource="本机缓存（设置连接未成功，请先打开模块）";}
   for(String key:Config.KEYS){states.put(key,on(key)?"checking":"disabled");hits.put(key,0L);}
   try{keywordRules=TextRules.parse(options.getString("keyword_rules",""));userRules=TextRules.parse(options.getString("user_rules",""));locationRules=TextRules.parse(options.getString("location_rules",""));}catch(IllegalArgumentException e){fault("keywords",e);fault("users",e);fault("comment_filter",e);fault("comment_location",e);}
