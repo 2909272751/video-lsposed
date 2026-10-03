@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.qqliveclean"
-    android:versionCode="69"
-    android:versionName="0.3.66">
+    android:versionCode="100"
+    android:versionName="1.0.0">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
     <queries>
         <package android:name="com.tencent.qqlive" />
@@ -11,7 +11,7 @@
     </queries>
     <application
         android:name=".App"
-        android:label="视频精简"
+        android:label="广告净化"
         android:description="@string/description"
         android:icon="@drawable/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"

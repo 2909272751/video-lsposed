@@ -33,8 +33,19 @@ public final class Config {
      */
     public static final String PACKAGE_IQIYI = "com.qiyi.video";
 
+    /**
+     * The suite now serves eight apps. These four families were separate APKs until this build;
+     * their rules live under apps/&lt;family&gt;/ and are dispatched from MainHook.
+     */
+    public static final String PACKAGE_QQMUSIC = "com.tencent.qqmusic";
+    public static final String PACKAGE_DIDI = "com.sdu.didi.psnger";
+    public static final String PACKAGE_TAOBAO = "com.taobao.taobao";
+    public static final String PACKAGE_XIANYU = "com.taobao.idlefish";
+    public static final String PACKAGE_WEIBO = "com.sina.weibo";
+
     /** Every package this module installs rules for. */
-    public static final String[] PACKAGES = {PACKAGE, PACKAGE_YOUKU, PACKAGE_IQIYI};
+    public static final String[] PACKAGES = {PACKAGE, PACKAGE_YOUKU, PACKAGE_IQIYI,
+            PACKAGE_QQMUSIC, PACKAGE_DIDI, PACKAGE_TAOBAO, PACKAGE_XIANYU, PACKAGE_WEIBO};
 
     /** True for a package this module has a rule set for. */
     static boolean handles(String packageName) {
@@ -48,7 +59,13 @@ public final class Config {
     /** Display name used in the settings page, the logs and the compatibility report header. */
     static String appLabel(String packageName) {
         if (PACKAGE_IQIYI.equals(packageName)) return "爱奇艺";
-        return PACKAGE_YOUKU.equals(packageName) ? "优酷" : "腾讯视频";
+        if (PACKAGE_YOUKU.equals(packageName)) return "优酷";
+        if (PACKAGE_QQMUSIC.equals(packageName)) return "QQ 音乐";
+        if (PACKAGE_DIDI.equals(packageName)) return "滴滴出行";
+        if (PACKAGE_TAOBAO.equals(packageName)) return "淘宝";
+        if (PACKAGE_XIANYU.equals(packageName)) return "闲鱼";
+        if (PACKAGE_WEIBO.equals(packageName)) return "微博";
+        return "腾讯视频";
     }
 
     /** Settings page's own private store. Served to the target process by {@link ConfigProvider}. */

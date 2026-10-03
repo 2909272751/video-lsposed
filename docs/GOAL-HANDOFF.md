@@ -3280,3 +3280,83 @@ hit=youku_feed_ad_card collapsed: 576x467
 真正的错误会被淹没。`activityArg()` 改为取不到就返回 null。
 
 **0.3.66 回归：异常 3 → 0，规则命中保持。**
+---
+
+## 2026-10-03 五个模块合并为一个（广告净化 1.0.0）
+
+### 结果
+
+原来分散的五个 LSPosed 模块合并成 **一个 APK、一个包名 `io.github.qqliveclean`、一个设置页**，
+显示名 **广告净化**，版本 1.0.0（versionCode 100）。
+
+宿主沿用 `video-lsposed`（腾讯视频），因为它的规则最成熟、兼容报告最完整。
+**包名刻意不改**，避免牵动 manifest package、各处包声明和 Provider authority。
+
+| 原模块 | 原包名 | 合并后 |
+| --- | --- | --- |
+| 视频精简 0.3.66 | `io.github.qqliveclean` | 宿主（规则不动） |
+| QQ 音乐精简 0.5.3 | `io.github.qqmusicclean` | `apps/qqmusic` |
+| 淘系去广告 0.1.1 | `io.github.taobaoadclean` | `apps/taobao` |
+| DiDi Ad Clean | `io.github.didiadclean` | `apps/didi` |
+| 微博 | `io.github.weiboclean` | `apps/weibo` |
+
+设备上旧的四个 APK 已卸载，只留一个。
+
+### 真机验证（同一次会话内的证据）
+
+| 应用 | 日志证据 |
+| --- | --- |
+| QQ音乐 20.9.0.8 | `event=suite_dispatch family=qqmusic` + `feature=cold result=matched` / `feature=hot result=matched` |
+| 微博 16.10.0 (8202) | `event=suite_dispatch family=weibo` + `hooks=24; installMs=35` |
+| 滴滴 8.0.14 | `event=suite_dispatch family=didi` + `[schema=5] install_summary hooked=23 miss=0` |
+| 淘宝 | `event=suite_dispatch family=taobao` + `install_summary splash=matched popup=matched widget=matched sdk=matched` |
+
+### 合并中踩到并解决的四个坑（都写进了 build.ps1 注释）
+
+1. **不能靠「宿主没有显式构造器」推断无参构造可用。**
+   第一版给子规则集加了 `MainHook(XposedModuleInterface base){ super(base); }`，编译不过（stub 里没有这个构造），
+   于是改成无参 `super()`。这个推断是**错的**：真机上直接报
+   `IllegalStateException: Framework not attached` —— 宿主能用无参构造，是因为 **LSPosed 自己实例化并附加了它**；
+   手动 `new` 出来的第二个 XposedModule 拿不到框架。
+   最终做法：新增 `io.github.qqliveclean.RuleHost`，让四套规则集**不再继承 XposedModule**，改为持有一个宿主模块并转发
+   `hook/log/getRemotePreferences/getApiVersion/getFrameworkName/getFrameworkVersion`。转发而不是改写调用点，
+   是因为这些文件里 `hook()`/`log()` 有近百处。
+   **教训：stub 与真实 API 不一致时不能猜，必须有真机证据。**
+
+2. **模块编译不能带 `-bootclasspath androidJar`。**
+   javac 脱糖 lambda 要用 `java.lang.invoke.LambdaMetafactory`，而 android.jar 里那个类是缺 `metafactory()` 的残桩，
+   于是每一个 lambda 点都报 `cannot find symbol: method metafactory`。
+   微博规则集有 48 处 lambda，只有把它和 android.jar 一起放到 **classpath** 才编译得过 ——
+   这正是 `weibo-clean-lsposed` 自己的 build.psl 一直以来的写法。
+   **注：只有编译 stub 那一步用 `-bootclasspath`。**
+
+3. **javac 按命令行顺序做归属分析，源文件顺序会决定成败。**
+   宿主的 `MainHook` 用相对包名 `apps.qqmusic.MainHook` 引用子规则集时，
+   `Get-ChildItem -Recurse` 恰好先返回顶层文件再下钻进子目录，于是报 `package apps.didi does not exist`，
+   而**所有文件都确实传给了 javac**。最阴险的地方是：报错之外，子规则集一个 `.class` 都没生成。
+   已在 build.ps1 里把 `apps/` 排在前面。
+   另外，相对包名在这一套参数下仍然失败，改成**全限定名**才真正通过 —— 两者都留着，全限定名更稳。
+
+4. **didi 的 `R.java` 不是 aapt2 生成的那个 R，是手写反射助手。**
+   批量搬迁时按惯例跳过了 `R.java`，结果 `R.load(loader, ...)` 全部找不到符号。
+   qqmusic 同理还依赖 `ScanOverlay`。
+
+### 依赖与体积
+
+QQ音乐规则集依赖 DexKit，合并后要一并带进来，且是**编译期 + 运行期**双重依赖
+（运行期 `dlopen` `libdexkit.so`）：`dexkit.jar` / `flatbuffers-java.jar` / `kotlin-stdlib.jar` 进 classpath 与 d8，
+四个 ABI 的 `libdexkit.so` 进 `lib/`。APK 从 135,951 字节涨到 1,492,008 字节，就是这三样加原生库。
+
+### 尚存的已知缺口
+
+- **合并进来的四套规则集的设置项还没接到宿主设置页。**
+  微博日志里如实报 `本机缓存（设置连接未成功，请先打开模块）`：走的是本地缓存兜底，不会崩，但开关不生效。
+  原来的四个模块各自带 `MainActivity`/`StatusProvider`/`SettingsProvider`，合并时按「一个 App 一个设置页」的原则
+  **整个删掉了**（22 个文件），所以设置页要重新在宿主里做一遍。
+- 各 App 原有的适配缺口仍在（例如 QQ音乐 `promo` 报 `NoSuchMethodException`），这是合并前就有的，不是合并引入的。
+- 视频侧遗留项（优酷详情页促销、爱奇艺、58 秒前贴标）见上文各轮记录，未处理。
+
+### LSPosed 作用域需要手动写入
+
+更新已安装模块的 APK **不会**刷新 LSPosed 的作用域（它存在 `modules_config.db` 里）。
+本轮直接把 5 个新包写进了 `scope` 表（等价于在 LSPosed 界面里勾选），**改完必须重启**才生效。

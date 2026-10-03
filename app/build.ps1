@@ -66,7 +66,7 @@ if ($env:QLC_BUILD_TMP) {
 $stage = Join-Path $stageParent ('qlc-' + [guid]::NewGuid().ToString('N'))
 $dist = Join-Path $app 'dist'
 $keystore = Join-Path $app 'debug.keystore'
-$output = Join-Path $dist 'video-clean-v0.3.66.apk'
+$output = Join-Path $dist 'video-clean-v1.0.0.apk'
 $env:JAVA_HOME = $jdk
 $env:Path = (Join-Path $jdk 'bin') + ';' + $env:Path
 
@@ -81,8 +81,11 @@ foreach ($needed in @($androidJarSource, $javac, $java, $jar, $keytool, $aapt2, 
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item -LiteralPath $androidJarSource -Destination $stage
 $androidJar = Join-Path $stage 'android.jar'
-foreach ($folder in @('stub-src', 'src', 'res', 'META-INF', 'libs')) {
-    Copy-Item -LiteralPath (Join-Path $app $folder) -Destination $stage -Recurse -Force
+foreach ($folder in @('stub-src', 'src', 'res', 'META-INF', 'libs', 'jni')) {
+    $from = Join-Path $app $folder
+    if (Test-Path -LiteralPath $from) {
+        Copy-Item -LiteralPath $from -Destination $stage -Recurse -Force
+    }
 }
 Copy-Item -LiteralPath (Join-Path $app 'AndroidManifest.xml') -Destination $stage
 foreach ($folder in @('stubs', 'classes', 'dex', 'out')) {
@@ -97,14 +100,33 @@ function Run-Native([string]$name, [scriptblock]$action) {
 try {
     $stubs = @(Get-ChildItem -LiteralPath (Join-Path $stage 'stub-src') -Recurse -Filter '*.java' | ForEach-Object FullName)
     $sources = @(Get-ChildItem -LiteralPath (Join-Path $stage 'src') -Recurse -Filter '*.java' | ForEach-Object FullName)
+    # javac attributes sources in command-line order, and MainHook references the rule sets under
+    # apps/<family>/ by their relative package name. Get-ChildItem -Recurse walks top-level files
+    # before descending, so those four references failed with "package apps.didi does not exist"
+    # even though every file was passed. Sorting the sub-package sources first fixes it, and the
+    # failure mode was silent in the worst way: the apps rule sets simply produced no .class files.
+    $sources = @($sources | Sort-Object { $_ -notlike '*\apps\*' })
     $serviceJar = Join-Path $stage 'libs\service-classes.jar'
+    # DexKit and its two runtime deps came in with the QQ 音乐 rule set. They are compile-time AND
+    # runtime dependencies (DexKit loads libdexkit.so), so they have to be on the javac classpath,
+    # fed to D8, and the .so files have to reach the APK. Listed as an array so an empty libs dir
+    # still produces a valid, empty argument list.
+    $extraJars = @(Get-ChildItem -LiteralPath (Join-Path $stage 'libs') -Filter '*.jar' -ErrorAction SilentlyContinue |
+        ForEach-Object FullName | Where-Object { $_ -ne $serviceJar })
+    $extraDex = @($extraJars)
     Write-Host 'Compiling API stubs and module'
     Run-Native 'API stub compilation' { & $javac -encoding UTF-8 -nowarn -source 8 -target 8 -bootclasspath $androidJar -d (Join-Path $stage 'stubs') @stubs }
-    $compilePath = (Join-Path $stage 'stubs') + ';' + $serviceJar
-    Run-Native 'Module compilation' { & $javac -encoding UTF-8 -nowarn -source 8 -target 8 -bootclasspath $androidJar -classpath $compilePath -d (Join-Path $stage 'classes') @sources }
+    # android.jar belongs on the classpath here, NOT as -bootclasspath. javac desugars lambdas
+    # through java.lang.invoke.LambdaMetafactory, and the android.jar copy of that class is a stub
+    # without metafactory(), so a bootclasspath build fails every lambda site with
+    # "cannot find symbol: method metafactory". The rule sets ported from weibo-clean-lsposed use
+    # lambdas heavily and that module built fine precisely because it took this same route.
+    $compilePath = (@((Join-Path $stage 'stubs'), $serviceJar, $androidJar) + $extraJars) -join ';'
+    Run-Native 'Module compilation' { & $javac -encoding UTF-8 -nowarn -source 8 -target 8 -classpath $compilePath -d (Join-Path $stage 'classes') @sources }
     $classesJar = Join-Path $stage 'classes.jar'
     Run-Native 'JAR creation' { & $jar -cf $classesJar -C (Join-Path $stage 'classes') . }
-    Run-Native 'DEX conversion' { & $java -Xmx3072M -cp $d8Jar com.android.tools.r8.D8 --min-api 26 --lib $androidJar --output (Join-Path $stage 'dex') $classesJar $serviceJar }
+    $dexInputs = @($classesJar, $serviceJar) + $extraDex
+    Run-Native 'DEX conversion' { & $java -Xmx3072M -cp $d8Jar com.android.tools.r8.D8 --min-api 26 --lib $androidJar --output (Join-Path $stage 'dex') @dexInputs }
 
     Write-Host 'Packaging Android resources'
     # aapt2 and zipalign are native binaries. On a workspace whose path contains
@@ -125,6 +147,13 @@ try {
         $archive = [System.IO.Compression.ZipFile]::Open($unsigned, [System.IO.Compression.ZipArchiveMode]::Update)
         try {
             [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $stage 'dex\classes.dex'), 'classes.dex') | Out-Null
+            # DexKit ships libdexkit.so for four ABIs and dlopen()s it at runtime. A merged build that
+            # ships the DexKit rule set without these would compile fine and then throw
+            # UnsatisfiedLinkError inside a target app.
+            Get-ChildItem -LiteralPath (Join-Path $stage 'jni') -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $relative = 'lib/' + $_.FullName.Substring((Join-Path $stage 'jni').Length + 1).Replace('\', '/')
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $relative) | Out-Null
+            }
             Get-ChildItem -LiteralPath (Join-Path $stage 'META-INF') -Recurse -File | ForEach-Object {
                 $relative = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
                 [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $relative) | Out-Null

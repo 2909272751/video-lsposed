@@ -41,12 +41,15 @@ public final class MainHook extends XposedModule {
             new java.util.concurrent.atomic.AtomicReference<Config.Settings>(null);
 
     private String processName;
+    /** Kept so a delegated rule set can be driven through the same lifecycle it was built for. */
+    private XposedModuleInterface.ModuleLoadedParam loadedParam;
     /** version name captured for the compatibility report header. */
     private static String currentVersionName = "unknown";
     private final AtomicBoolean installed = new AtomicBoolean(false);
 
     @Override public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
         processName = param.getProcessName();
+        loadedParam = param;
         H.attach(this);
         H.info("event=module_loaded process=" + processName + " api=" + getApiVersion()
                 + " framework=" + getFrameworkName() + " " + getFrameworkVersion());
@@ -68,6 +71,12 @@ public final class MainHook extends XposedModule {
             H.info("event=install_skipped reason=already_installed");
             return;
         }
+        // Four rule sets (QQ 音乐 / 滴滴 / 淘系 / 微博) were separate APKs before this build and are
+        // dispatched here rather than inside configure(). Each of them finds its own Context in a way
+        // that was already proven on its own app; routing them through this module's ContextFinder
+        // would put that proven path at risk and could reproduce the worst failure in this project -
+        // a session that installs zero rules and looks like a logic bug.
+        if (delegateSuiteFamily(param, target)) return;
         try {
             final ClassLoader loader = param.getClassLoader();
             // One line that turns a libxposed API change into a readable diagnosis.
@@ -116,7 +125,7 @@ public final class MainHook extends XposedModule {
      * is the source of truth and is bumped by the same edit that bumps the manifest.
      */
     private static String versionName() {
-        return "qlc-0.3.66";
+        return "qlc-1.0.0";
     }
 
     /**
@@ -150,6 +159,42 @@ public final class MainHook extends XposedModule {
         } catch (Throwable error) {
             H.miss("context_probe_app", H.describe(error));
         }
+    }
+
+    /**
+     * Hands a package to the rule set that grew up with that app. Returns false for the three
+     * video apps, which keep using this module's own configure() path.
+     *
+     * <p>The sub rule sets extend XposedModule and each keeps its own once-only guard, so they are
+     * constructed lazily per process and driven with the very same params the framework gave us -
+     * forwarding ModuleLoadedParam as well matters because they capture the process name there.
+     */
+    private boolean delegateSuiteFamily(XposedModuleInterface.PackageReadyParam param, String target) {
+        RuleHost family = null;
+        String label = null;
+        if (Config.PACKAGE_QQMUSIC.equals(target)) {
+            family = new io.github.qqliveclean.apps.qqmusic.MainHook(this);
+            label = "qqmusic";
+        } else if (Config.PACKAGE_DIDI.equals(target)) {
+            family = new io.github.qqliveclean.apps.didi.MainHook(this);
+            label = "didi";
+        } else if (Config.PACKAGE_TAOBAO.equals(target) || Config.PACKAGE_XIANYU.equals(target)) {
+            family = new io.github.qqliveclean.apps.taobao.MainHook(this);
+            label = "taobao";
+        } else if (Config.PACKAGE_WEIBO.equals(target)) {
+            family = new io.github.qqliveclean.apps.weibo.MainHook(this);
+            label = "weibo";
+        } else {
+            return false;
+        }
+        H.info("event=suite_dispatch family=" + label + " package=" + target);
+        try {
+            if (loadedParam != null) family.onModuleLoaded(loadedParam);
+            family.onPackageReady(param);
+        } catch (Throwable error) {
+            H.error("event=suite_dispatch_failed family=" + label + " package=" + target, error);
+        }
+        return true;
     }
 
     /** Last-resort Context source: the first Activity that gets created. */
