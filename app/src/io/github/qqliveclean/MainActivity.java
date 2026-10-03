@@ -16,10 +16,19 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-/** Three app-specific setting pages, with one shared compatibility and recovery entry. */
+/**
+ * One page per target app, reached from a list.
+ *
+ * <p>The previous layout used four tabs and put five apps' worth of switches into a single
+ * "其他" tab, so one screen held around forty toggles from six different apps - no way to tell
+ * which switch belonged to which app. Now the first page is a list of apps, each showing how
+ * many of its own switches are on, and tapping one opens that app alone.
+ */
 public final class MainActivity extends Activity {
     private static final int BACKGROUND = Color.rgb(245, 247, 250);
     private static final int INK = Color.rgb(30, 43, 48);
@@ -27,14 +36,55 @@ public final class MainActivity extends Activity {
     private static final int ACCENT = Color.rgb(0, 122, 255);
     private static final int SECTION = Color.rgb(26, 111, 160);
 
+    private static final int PAGE_LIST = 0;
+    private static final int PAGE_COUNT = 9;
+    /** Entry titles, indexed by page; index 0 is the list page and has no title. */
+    private static final String[] PAGE_TITLES = {
+        "", "腾讯视频", "优酷", "爱奇艺", "QQ 音乐", "滴滴出行", "淘宝 / 闲鱼", "微博", "OPPO 软件商店"};
+
     private final Map<String, Switch> switches = new LinkedHashMap<>();
     private final Map<String, Boolean> defaults = new LinkedHashMap<>();
+    /** Keys owned by each page, in order, so the list can count them without re-walking the tree. */
+    private final List<List<String>> pageKeys = new ArrayList<List<String>>();
+    private final TextView[] statusForPage = new TextView[PAGE_COUNT];
+    private final Map<Integer, Button> compatButtons = new LinkedHashMap<Integer, Button>();
     private TextView status;
+    private Button backButton;
+    private TextView headerTitle;
+    private TextView headerSubtitle;
+    private LinearLayout listBody;
     private boolean refreshing;
-    private final ScrollView[] pages = new ScrollView[4];
-    private final Button[] pageButtons = new Button[4];
-    private Button checkCompatibility;
+    private final ScrollView[] pages = new ScrollView[PAGE_COUNT];
     private int selectedPage;
+    private List<String> buildingKeys;
+    private int pageBeingBuilt;
+
+    /** The app a page belongs to, or null for the list page. */
+    private String pagePackage(int page) {
+        switch (page) {
+            case 1: return Config.PACKAGE;
+            case 2: return Config.PACKAGE_YOUKU;
+            case 3: return Config.PACKAGE_IQIYI;
+            case 4: return Config.PACKAGE_QQMUSIC;
+            case 5: return Config.PACKAGE_DIDI;
+            // 淘宝 and 闲鱼 ship one rule set, so they stay one entry instead of two identical ones.
+            case 6: return Config.PACKAGE_TAOBAO;
+            case 7: return Config.PACKAGE_WEIBO;
+            case 8: return Config.PACKAGE_HEYTAP;
+            default: return null;
+        }
+    }
+
+    private String pageFamily(int page) {
+        switch (page) {
+            case 4: return FamilySettings.QQMUSIC;
+            case 5: return FamilySettings.DIDI;
+            case 6: return FamilySettings.TAOBAO;
+            case 7: return FamilySettings.WEIBO;
+            case 8: return FamilySettings.HEYTAP;
+            default: return null;
+        }
+    }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -44,49 +94,38 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(16), dp(14), dp(16), 0);
         setContentView(root);
 
-        root.addView(text("广告净化", 25, INK, true));
-        TextView subtitle = text("长视频、音乐、电商、出行、社交，统一在这里设置", 13, MUTED, false);
-        subtitle.setPadding(0, dp(4), 0, dp(10));
-        root.addView(subtitle);
-
-        LinearLayout statusCard = card();
-        status = text("", 14, INK, false);
-        statusCard.addView(status);
-        checkCompatibility = new Button(this);
-        checkCompatibility.setText("查看本应用兼容结果");
-        checkCompatibility.setAllCaps(false);
-        checkCompatibility.setTextColor(ACCENT);
-        checkCompatibility.setBackgroundColor(Color.TRANSPARENT);
-        checkCompatibility.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { scanCurrentApp(); }
+        // Header doubles as the detail-page title bar: the list page shows the app name, and a
+        // detail page shows that app's own name with a back arrow.
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        backButton = new Button(this);
+        backButton.setText("‹");
+        backButton.setTextSize(24);
+        backButton.setAllCaps(false);
+        backButton.setMinWidth(0);
+        backButton.setMinimumWidth(0);
+        backButton.setPadding(dp(6), 0, dp(12), 0);
+        backButton.setTextColor(SECTION);
+        backButton.setBackgroundColor(Color.TRANSPARENT);
+        backButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showPage(PAGE_LIST); }
         });
-        statusCard.addView(checkCompatibility);
-        root.addView(statusCard);
+        header.addView(backButton);
 
-        LinearLayout navigation = new LinearLayout(this);
-        navigation.setOrientation(LinearLayout.HORIZONTAL);
-        navigation.setPadding(0, dp(12), 0, dp(8));
-        String[] names = {"腾讯视频", "优酷", "爱奇艺", "其他"};
-        for (int index = 0; index < names.length; index++) {
-            final int selected = index;
-            Button button = new Button(this);
-            button.setText(names[index]);
-            button.setTextSize(13);
-            button.setAllCaps(false);
-            button.setMinWidth(0);
-            button.setMinimumWidth(0);
-            button.setPadding(0, 0, 0, 0);
-            button.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View view) { showPage(selected); }
-            });
-            pageButtons[index] = button;
-            navigation.addView(button, new LinearLayout.LayoutParams(0, dp(46), 1));
-        }
-        root.addView(navigation);
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        headerTitle = text("广告净化", 25, INK, true);
+        titles.addView(headerTitle);
+        headerSubtitle = text("六个去广告模块已合并为一个，统一在这里设置", 13, MUTED, false);
+        headerSubtitle.setPadding(0, dp(3), 0, 0);
+        titles.addView(headerSubtitle);
+        header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(header);
 
         FrameLayout pageHost = new FrameLayout(this);
-        LinearLayout[] pageBodies = new LinearLayout[4];
-        for (int index = 0; index < pages.length; index++) {
+        LinearLayout[] pageBodies = new LinearLayout[PAGE_COUNT];
+        for (int index = 0; index < PAGE_COUNT; index++) {
             ScrollView scroll = new ScrollView(this);
             scroll.setFillViewport(true);
             LinearLayout pageBody = new LinearLayout(this);
@@ -95,10 +134,15 @@ public final class MainActivity extends Activity {
             scroll.addView(pageBody);
             pages[index] = scroll;
             pageBodies[index] = pageBody;
+            pageKeys.add(new ArrayList<String>());
             pageHost.addView(scroll);
         }
         root.addView(pageHost, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout body = pageBodies[0];
+        listBody = pageBodies[PAGE_LIST];
+        LinearLayout body = pageBodies[1];
+        buildingKeys = pageKeys.get(1);
+        pageBeingBuilt = 1;
+        addPageStatus(body, text("", 13, MUTED, false));
 
         section(body, "启动与播放");
         LinearLayout splashCard = card();
@@ -132,7 +176,10 @@ public final class MainActivity extends Activity {
                 "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
         body.addView(qqliveNotifyCard);
 
-        body = pageBodies[1];
+        body = pageBodies[2];
+        buildingKeys = pageKeys.get(2);
+        pageBeingBuilt = 2;
+        addPageStatus(body, text("", 13, MUTED, false));
         section(body, "启动与播放");
         LinearLayout youkuCard = card();
         toggle(youkuCard, Config.YOUKU_BLOCK_SPLASH, "拦截开屏广告",
@@ -173,7 +220,10 @@ public final class MainActivity extends Activity {
                 "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
         body.addView(youkuNotifyCard);
 
-        body = pageBodies[2];
+        body = pageBodies[3];
+        buildingKeys = pageKeys.get(3);
+        pageBeingBuilt = 3;
+        addPageStatus(body, text("", 13, MUTED, false));
         section(body, "启动广告");
         LinearLayout qiyiCard = card();
         toggle(qiyiCard, Config.IQIYI_BLOCK_SPLASH, "拦截开屏广告",
@@ -204,16 +254,16 @@ public final class MainActivity extends Activity {
                 "只拦会员促销类通知；追剧提醒、播放和下载通知不受影响", true);
         body.addView(qiyiNotifyCard);
 
-        // The four rule sets that used to ship as four separate APKs. Their keys are published
-        // under a per-family prefix, so a toggle here can never be confused with a video-app one -
-        // QQ音乐 and the host both want "block_splash".
-        body = pageBodies[3];
-        TextView mergedHint = text("这些应用原来需要分别安装各自的模块，现在统一在这里设置。", 13, MUTED, false);
-        mergedHint.setPadding(0, 0, 0, dp(10));
-        body.addView(mergedHint);
+        // The rule sets that used to ship as five separate APKs get one page each, in the same order as
+        // the list. Their keys carry a per-family prefix, so a toggle here can never be confused
+        // with a video-app one - QQ音乐 and the host both want "block_splash".
         for (int familyIndex = 0; familyIndex < FamilySettings.FAMILIES.length; familyIndex++) {
             String family = FamilySettings.FAMILIES[familyIndex];
-            section(body, FamilySettings.FAMILY_LABELS[familyIndex]);
+            int page = 4 + familyIndex;
+            body = pageBodies[page];
+            buildingKeys = pageKeys.get(page);
+            pageBeingBuilt = page;
+            addPageStatus(body, text("", 13, MUTED, false));
             LinearLayout familyCard = card();
             String[] familyKeys = FamilySettings.keysOf(family);
             String[] familyLabels = FamilySettings.labelsOf(family);
@@ -222,14 +272,23 @@ public final class MainActivity extends Activity {
                         FamilySettings.defaultFor(family, familyKeys[keyIndex]));
             }
             body.addView(familyCard);
+            body.addView(compatButtonFor(page));
         }
 
-        body = pageBodies[0];
-        section(body, "诊断与恢复");        LinearLayout debugCard = card();
-        addNote(debugCard, "顶部的「兼容结果」可查看每项规则是否安装、是否实际触发。", 12);
+        // The list page carries the app rows plus the one global section; per-app settings never
+        // appear here.
+        section(listBody, "应用");
+        LinearLayout appListCard = card();
+        for (int page = 1; page < PAGE_COUNT; page++) appListCard.addView(appRow(page));
+        listBody.addView(appListCard);
+
+        section(listBody, "全局");
+        LinearLayout debugCard = card();
+        buildingKeys = null;
+        addNote(debugCard, "每个应用页面底部的「查看兼容结果」会列出该应用每一项规则是否安装、是否实际触发。", 12);
         toggle(debugCard, Config.DEBUG_LOG, "记录详细日志",
                 "遇到漏拦截时再开启，便于定位", false);
-        body.addView(debugCard);
+        listBody.addView(debugCard);
 
         LinearLayout footer = card();
         Button reset = new Button(this);
@@ -249,44 +308,128 @@ public final class MainActivity extends Activity {
         });
         footer.addView(reset);
         addNote(footer, "设置改动后，强停并重新打开对应应用。应用更新后请查看兼容结果。", 12);
-        body.addView(footer);
-        showPage(state == null ? 0 : state.getInt("selected_page", 0));
+        listBody.addView(footer);
+        showPage(state == null ? PAGE_LIST : state.getInt("selected_page", PAGE_LIST));
+    }
+
+    /** Version line for one app page, inserted above its sections. */
+    private void addPageStatus(LinearLayout body, TextView view) {
+        statusForPage[pageBeingBuilt] = view;
+        view.setPadding(0, 0, 0, dp(10));
+        body.addView(view);
+    }
+
+    /** The compatibility-scan button for one app page; each page owns its own. */
+    private View compatButtonFor(final int page) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText("查看本应用兼容结果");
+        button.setTextColor(ACCENT);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { scanApp(page); }
+        });
+        compatButtons.put(page, button);
+        return button;
+    }
+
+    /** One tappable list row: app name, its installed version, and how many switches are on. */
+    private View appRow(final int page) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(56));
+        row.setPadding(dp(2), dp(6), dp(2), dp(6));
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showPage(page); }
+        });
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.addView(text(PAGE_TITLES[page], 16, INK, true));
+        List<String> keys = pageKeys.get(page);
+        labels.addView(text(summaryOf(page, keys), 12, MUTED, false));
+        row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        String version = installedVersion(pagePackage(page));
+        if (!"未安装".equals(version)) {
+            TextView mark = text(version, 12, MUTED, false);
+            mark.setPadding(dp(8), 0, dp(6), 0);
+            row.addView(mark);
+        }
+        TextView arrow = text("›", 20, SECTION, false);
+        row.addView(arrow);
+        return row;
+    }
+
+    /** "已开启 6 / 8 项" plus a hint when the app is not installed. */
+    private String summaryOf(int page, List<String> keys) {
+        String packageName = pagePackage(page);
+        if ("未安装".equals(installedVersion(packageName))) return "未安装";
+        int on = 0;
+        for (String key : keys) {
+            Boolean stored = App.read(this, key, defaults.get(key));
+            if (stored != null && stored) on++;
+        }
+        return "已开启 " + on + " / " + keys.size() + " 项";
     }
 
     private void showPage(int selected) {
+        if (selected < 0 || selected >= PAGE_COUNT) selected = PAGE_LIST;
         selectedPage = selected;
-        String packageName = currentPagePackage();
-        if (packageName == null) {
-            // The "其他" tab holds four separate apps, so there is no single version to report and
-            // no single target for the compatibility scan. Claiming iQiyi's version here would be a
-            // plain lie on screen - it did exactly that before this branch existed.
-            status.setText("这里汇总 QQ 音乐、滴滴出行、淘宝 / 闲鱼、微博的开关。\n"
-                    + "各项的安装与触发情况，在对应应用里看兼容结果更准");
-            checkCompatibility.setVisibility(View.GONE);
-        } else {
-            checkCompatibility.setVisibility(View.VISIBLE);
-            String label = Config.appLabel(packageName);
-            String suffix = " · 新版本，规则逐项尝试";
-            try {
-                android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(packageName, 0);
-                if (info.versionCode == Config.verifiedVersionCode(packageName))
-                    suffix = " · 此版本有真机适配记录";
-            } catch (Throwable ignored) { suffix = " · 未安装"; }
-            status.setText("版本 " + installedVersion(packageName) + suffix
-                    + "\n修改后强停并重新打开" + label);
+        boolean isList = selected == PAGE_LIST;
+
+        backButton.setVisibility(isList ? View.INVISIBLE : View.VISIBLE);
+        headerTitle.setText(isList ? "广告净化" : PAGE_TITLES[selected]);
+        headerSubtitle.setText(isList
+                ? "六个去广告模块已合并为一个，统一在这里设置"
+                : "设置改动后，强停并重新打开" + Config.appLabel(pagePackage(selected)));
+
+        if (!isList) {
+            TextView line = statusForPage[selected];
+            String packageName = pagePackage(selected);
+            if (line != null) {
+                String suffix = " · 新版本，规则逐项尝试";
+                try {
+                    android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(packageName, 0);
+                    if (info.versionCode == Config.verifiedVersionCode(packageName))
+                        suffix = " · 此版本有真机适配记录";
+                } catch (Throwable ignored) { suffix = " · 未安装"; }
+                line.setText("版本 " + installedVersion(packageName) + suffix);
+            }
         }
-        for (int index = 0; index < pages.length; index++) {
+
+        for (int index = 0; index < PAGE_COUNT; index++) {
             pages[index].setVisibility(index == selected ? View.VISIBLE : View.GONE);
-            pageButtons[index].setTextColor(index == selected ? Color.WHITE : SECTION);
-            GradientDrawable background = new GradientDrawable();
-            background.setColor(index == selected ? SECTION : Color.WHITE);
-            background.setCornerRadius(dp(12));
-            pageButtons[index].setBackground(background);
+        }
+        if (isList) refreshListSummaries();
+    }
+
+    /** The list shows counts, so it has to be recomputed every time it becomes visible. */
+    private void refreshListSummaries() {
+        // child 0 is the "应用" section label, child 1 is the card holding one row per app.
+        if (listBody.getChildCount() < 2) return;
+        View second = listBody.getChildAt(1);
+        if (!(second instanceof LinearLayout)) return;
+        LinearLayout card = (LinearLayout) second;
+        for (int index = 0; index < card.getChildCount(); index++) {
+            View row = card.getChildAt(index);
+            if (!(row instanceof LinearLayout)) continue;
+            LinearLayout rowBox = (LinearLayout) row;
+            if (rowBox.getChildCount() < 1) continue;
+            View labels = rowBox.getChildAt(0);
+            if (!(labels instanceof LinearLayout)) continue;
+            LinearLayout labelBox = (LinearLayout) labels;
+            if (labelBox.getChildCount() < 2) continue;
+            View summary = labelBox.getChildAt(1);
+            if (summary instanceof TextView) {
+                ((TextView) summary).setText(summaryOf(index + 1, pageKeys.get(index + 1)));
+            }
         }
     }
 
-    private void scanCurrentApp() {
-        final String packageName = currentPagePackage();
+    private void scanApp(int page) {
+        final String packageName = pagePackage(page);
         if (packageName == null) return;
         final android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
         progress.setTitle("版本与兼容检测");
@@ -337,25 +480,6 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(state);
     }
 
-    /** The app whose settings page is showing; the payload is delivered to it on every write. */
-    private String currentPagePackage() {
-        if (selectedPage == 0) return Config.PACKAGE;
-        if (selectedPage == 1) return Config.PACKAGE_YOUKU;
-        // The merged rule sets read the provider once per process launch, so there is no single
-        // target app to hand a payload to; null just skips that delivery step.
-        return selectedPage == 2 ? Config.PACKAGE_IQIYI : null;
-    }
-
-    private String versionText(String packageName, int verifiedCode) {        try {
-            android.content.pm.PackageInfo info =
-                    getPackageManager().getPackageInfo(packageName, 0);
-            return info.versionName + (info.versionCode == verifiedCode
-                    ? " · 已在本机验证部分规则" : " · 新版本，规则将逐项尝试");
-        } catch (Throwable ignored) {
-            return "未安装";
-        }
-    }
-
     private String installedVersion(String packageName) {
         try {
             return getPackageManager().getPackageInfo(packageName, 0).versionName;
@@ -389,7 +513,7 @@ public final class MainActivity extends Activity {
         control.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(CompoundButton button, boolean checked) {
                 if (refreshing) return;
-                if (!App.write(MainActivity.this, key, checked, currentPagePackage())) {
+                if (!App.write(MainActivity.this, key, checked, pagePackage(selectedPage))) {
                     button.setOnCheckedChangeListener(null);
                     button.setChecked(!checked);
                     button.setOnCheckedChangeListener(this);
