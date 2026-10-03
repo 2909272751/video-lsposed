@@ -33,6 +33,7 @@ public final class MainActivity extends Activity {
     private boolean refreshing;
     private final ScrollView[] pages = new ScrollView[4];
     private final Button[] pageButtons = new Button[4];
+    private Button checkCompatibility;
     private int selectedPage;
 
     @Override public void onCreate(Bundle state) {
@@ -43,15 +44,15 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(16), dp(14), dp(16), 0);
         setContentView(root);
 
-        root.addView(text("视频精简", 25, INK, true));
-        TextView subtitle = text("选择应用，按页面分别设置", 13, MUTED, false);
+        root.addView(text("广告净化", 25, INK, true));
+        TextView subtitle = text("长视频、音乐、电商、出行、社交，统一在这里设置", 13, MUTED, false);
         subtitle.setPadding(0, dp(4), 0, dp(10));
         root.addView(subtitle);
 
         LinearLayout statusCard = card();
         status = text("", 14, INK, false);
         statusCard.addView(status);
-        Button checkCompatibility = new Button(this);
+        checkCompatibility = new Button(this);
         checkCompatibility.setText("查看本应用兼容结果");
         checkCompatibility.setAllCaps(false);
         checkCompatibility.setTextColor(ACCENT);
@@ -254,17 +255,26 @@ public final class MainActivity extends Activity {
 
     private void showPage(int selected) {
         selectedPage = selected;
-        String packageName = selected == 0 ? Config.PACKAGE
-                : selected == 1 ? Config.PACKAGE_YOUKU : Config.PACKAGE_IQIYI;
-        String label = Config.appLabel(packageName);
-        String suffix = " · 新版本，规则逐项尝试";
-        try {
-            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(packageName, 0);
-            if (info.versionCode == Config.verifiedVersionCode(packageName))
-                suffix = " · 此版本有真机适配记录";
-        } catch (Throwable ignored) { suffix = " · 未安装"; }
-        status.setText("版本 " + installedVersion(packageName) + suffix
-                + "\n修改后强停并重新打开" + label);
+        String packageName = currentPagePackage();
+        if (packageName == null) {
+            // The "其他" tab holds four separate apps, so there is no single version to report and
+            // no single target for the compatibility scan. Claiming iQiyi's version here would be a
+            // plain lie on screen - it did exactly that before this branch existed.
+            status.setText("这里汇总 QQ 音乐、滴滴出行、淘宝 / 闲鱼、微博的开关。\n"
+                    + "各项的安装与触发情况，在对应应用里看兼容结果更准");
+            checkCompatibility.setVisibility(View.GONE);
+        } else {
+            checkCompatibility.setVisibility(View.VISIBLE);
+            String label = Config.appLabel(packageName);
+            String suffix = " · 新版本，规则逐项尝试";
+            try {
+                android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(packageName, 0);
+                if (info.versionCode == Config.verifiedVersionCode(packageName))
+                    suffix = " · 此版本有真机适配记录";
+            } catch (Throwable ignored) { suffix = " · 未安装"; }
+            status.setText("版本 " + installedVersion(packageName) + suffix
+                    + "\n修改后强停并重新打开" + label);
+        }
         for (int index = 0; index < pages.length; index++) {
             pages[index].setVisibility(index == selected ? View.VISIBLE : View.GONE);
             pageButtons[index].setTextColor(index == selected ? Color.WHITE : SECTION);
@@ -276,8 +286,8 @@ public final class MainActivity extends Activity {
     }
 
     private void scanCurrentApp() {
-        final String packageName = selectedPage == 0 ? Config.PACKAGE
-                : selectedPage == 1 ? Config.PACKAGE_YOUKU : Config.PACKAGE_IQIYI;
+        final String packageName = currentPagePackage();
+        if (packageName == null) return;
         final android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
         progress.setTitle("版本与兼容检测");
         progress.setMessage("正在读取 " + Config.appLabel(packageName) + " 的逐项结果…");
