@@ -3513,3 +3513,39 @@ matched 12 / miss 1 / off 2
   Intent 工厂（候选只剩 getMainTabActivityIntent / getAppHealthReportIntent 等），
   该规则的结构在本版本疑似已改写，需要重新分析，不能靠搜签名猜。
 - off（设置默认关）：mine_upgrade、mine_download
+
+---
+
+## 2026-10-03 收口：撤回 boot_guide + 修 why= 串值
+
+### boot_guide 的结论（重新分析，不是猜）
+
+原锚点 `a.a.a.ue8.Ԩ(Context) -> Intent`。在 26.9.4_CN 上查：
+
+- `a.c4b`（原唯一调用方）已不存在；
+- `a.a.a.ue8` 被混淆器回收成另一个类：`isValid()Z` / `Ϳ()String` / `Ԩ()String` / `ԩ()I`，
+  没有 Context 参数也不返回 Intent；
+- 全包 10 个 dex 搜 `(Context)Intent`，`a/a/a/` 下已无任何匹配（只剩
+  getMainTabActivityIntent / getAppHealthReportIntent 之类）；
+- 在 dex 里搜中文串「开机必备」，三处命中全在
+  `com.heytap.cdo.osp.domain.common.CardTemplateType`：
+  `OPEN_REQUIRED_CARD`（文案「开机必备卡片(标题、横向4个APP、勾选框)」）、
+  `GAME_OPEN_REQUIRED_CARD`、`GAME_OPEN_REQUIRED_IMG_CARD`。
+
+结论：**开机必备在本版本改成了首页 feed 卡片**，不再是全屏引导页，也就没有等价的
+Intent 工厂可拦。所以显式标成 withdrawn —— 继续抛 NoSuchMethodException 只会每次启动
+报 miss，看起来像待修的适配缺口，其实是目标已不存在。恢复它要按卡片渲染路径重新分析，
+那是一条新规则，不在原处硬凑。
+
+### why= 串值（显示缺陷，已修）
+
+`probeFailure` 是共享字段，`probe()` 每次重置，但 `probeUi()` 忘了重置，于是上一项的
+失败原因会印到后续 UI 项上。实测 `bottom_bar` 显示 `matched` 却带着 `boot_guide` 的
+NoSuchMethodException，排障时会被直接误导。修法：`probeUi()` 入口同样重置
+`probeFailure` 与 `probePartial`。
+
+修完真机确认：**只有 boot_guide 一项带 why=**。
+
+### 商店最终状态（26.9.4_CN）
+
+matched 12 / miss 1(已标注 withdrawn) / off 2(设置默认关)

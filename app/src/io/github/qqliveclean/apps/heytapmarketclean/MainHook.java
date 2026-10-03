@@ -766,19 +766,29 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
         return null;
     }
 
-    /** 开机必备引导页：Intent 构造返回 null —— 唯一调用方 c4b.Ԩ 本来就判空。 */
+    /**
+     * 开机必备引导页规则：Intent 工厂返回 null，原实现挂在 a.a.a.ue8.Ԩ(Context)。
+     *
+     * <p>2026-10-03 在 26.9.4_CN 上撤回。原锚点随混淆轮转消失：a.a.a.ue8 现在是另一个类
+     * （isValid()Z / Ԩ()String / ԩ()I），全包 10 个 dex 搜不到 a/a/a/ 下任何 (Context)Intent 工厂。
+     * 逐条核对后确认：开机必备在本版本改成了首页卡片，证据是
+     * com.heytap.cdo.osp.domain.common.CardTemplateType 里的三个枚举 OPEN_REQUIRED_CARD /
+     * GAME_OPEN_REQUIRED_CARD / GAME_OPEN_REQUIRED_IMG_CARD，dex 实测文案为
+     * 「开机必备卡片(标题、横向4个APP、勾选框)」，也就是首页 feed 卡片而不是全屏引导页，
+     * 因此不存在等价的 Intent 工厂可拦。
+     *
+     * <p>显式记成 withdrawn 而不是继续抛 NoSuchMethodException：后者每次启动都报 miss，
+     * 看起来像待修复的适配缺口，实际是这个规则的目标已经不存在了。
+     * 要恢复它得按首页卡片重新分析渲染路径，那是一条新规则，不在这里硬凑。
+     */
+    private static final String BOOT_GUIDE_WITHDRAWN =
+            "withdrawn on 26.9.4_CN: 开机必备改为首页 CDO 卡片渲染（CardTemplateType."
+                    + "OPEN_REQUIRED_CARD / GAME_OPEN_REQUIRED_CARD / GAME_OPEN_REQUIRED_IMG_CARD），"
+                    + "原 a.a.a.ue8.Ԩ(Context)Intent 工厂随混淆轮转消失，全包已无等价锚点；"
+                    + "恢复需按卡片渲染路径重新分析";
+
     private void installBootGuideGate(ClassLoader loader) throws Exception {
-        Class<?> owner = load(loader, CLS_BOOT_GUIDE);
-        Method build = requireMethod(owner, M_GUIDE_INTENT, "android.content.Intent",
-                new String[]{"android.content.Context"});
-        hook(build).setId(Config.MODULE + "_boot_guide").intercept(new XposedInterface.Hooker() {
-            @Override public Object intercept(XposedInterface.Chain chain) {
-                hit(Config.F_BOOT_GUIDE);
-                return null;
-            }
-        });
-        log(Log.INFO, TAG, "hooked: boot guide " + build);
-        recordAnchor(Config.F_BOOT_GUIDE, build);
+        throw new UnsupportedOperationException(BOOT_GUIDE_WITHDRAWN);
     }
 
     // ══════════════════════ 安装期自检 ══════════════════════
@@ -2313,6 +2323,10 @@ public final class MainHook extends io.github.qqliveclean.RuleHost {
 
     /** UI 类特性在 id 解析之后单独判定（这样 partial 的原因能报出来）。 */
     private void probeUi(String feature, int... required) {
+        // probe() 每次都会重置，这里漏了，导致上一项的失败原因会串到 UI 项的 why= 上
+        // （实测：bottom_bar 显示 matched，却带着 boot_guide 的 NoSuchMethodException）。
+        probeFailure = null;
+        probePartial = false;
         if (!ON[Config.indexOf(feature)]) { probe(feature, false, null); return; }
         String state = uiState(feature, required);
         reportDone++;
