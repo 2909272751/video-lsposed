@@ -26,14 +26,34 @@
         android:label="广告净化"
         android:description="@string/description"
         android:icon="@drawable/ic_launcher"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!--
+          The launcher entry is an alias, not the activity itself, so that "隐藏桌面图标" can
+          disable exactly one component. MainActivity stays enabled, which is what keeps the
+          module reachable from LSPosed after the icon is gone - the same split LotusX uses.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="广告净化">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <!-- Reachable from LSPosed even when the desktop icon is hidden. -->
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name=".MainActivityAlias"
+            android:exported="true"
+            android:label="广告净化"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
         <provider
             android:name="io.github.libxposed.service.XposedProvider"
             android:authorities="io.github.qqliveclean.XposedService"

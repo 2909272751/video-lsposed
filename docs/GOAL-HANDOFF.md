@@ -3549,3 +3549,55 @@ NoSuchMethodException，排障时会被直接误导。修法：`probeUi()` 入�
 ### 商店最终状态（26.9.4_CN）
 
 matched 12 / miss 1(已标注 withdrawn) / off 2(设置默认关)
+
+## 设置页重构 + 一键隐藏 + 暗黑模式（2026-10-05）
+
+**两台设备**：上一轮的 RMX5060 一直不在线，本轮插入的是 RMX8899（Android 16 / LSPosed 2.2.0）。
+RMX8899 上此前还是**合并前的旧状态**（6 个模块分装、qqliveclean 作用域只有 3 个视频应用），
+本轮把合并版部署上去：卸载旧 5 个模块 → 装合并版 → 作用域写入 9 个包 → 重启生效。
+
+**装机注意事项（用户提供的，已采纳）**：模块**代码**改动只需 m force-stop 目标应用重开，
+不必重启手机；只有**作用域 / 启用状态**改动才需要重启（那部分缓存在 zygote，fork 时读一次）。
+此前每轮都重启是白花的。
+
+### 三项新增功能
+
+1. **两级菜单**：根页 = 应用列表（图标 / 版本 / 已开启 X/Y 项）→ 应用页 = 该应用的分组列表 →
+   分组页 = 开关。页数由固定 4 页改为按模型动态生成（List<Page> + parent 索引）。
+2. **一键隐藏桌面图标**：右上角 ⋮ 溢出菜单。机制照 LotusX 的做法把桌面入口拆成
+   ctivity-alias MainActivityAlias，MainActivity 另带 de.robv.android.xposed.category.MODULE_SETTINGS。
+   隐藏 = 只禁用 alias 一个组件，**规则照常运行**（hook 在目标进程里，不依赖本应用界面）。
+   已验证：隐藏后 esolve-activity -c LAUNCHER 返回 No activity found，
+   而 MODULE_SETTINGS 与显式组件启动都仍可用。恢复路径同菜单。
+3. **暗黑模式**：es/values/styles.xml + es/values-night/styles.xml 两套主题（跟随系统），
+   自绘配色按 uiMode 分支。溢出菜单/对话框由 Theme.Material.NoActionBar 自动跟随。
+
+### 顺带修掉的真 bug
+
+- Config.appLabel() 缺 com.heytap.market 映射，兜底返回"腾讯视频"
+  → 软件商店页面副标题显示"强停并重新打开**腾讯视频**"。兜底改为返回包名，缺口显式暴露。
+- 撤回的 oot_guide 开关仍渲染在页面上（翻开关没有任何作用）→ 不再渲染，
+  并在该分组加一行说明为什么没有它。
+- 重构残留 status.setTextColor(INK)：共享 status TextView 已不存在，onResume 直接 NPE 崩溃。
+- 重构漏掉 	oggle() 里记录 uildingKeys，导致列表页所有行显示"已开启 0 / 0 项"。
+- efreshListSummaries() 把行声明成 View 却调 getChildCount()（那是 LinearLayout 的方法）。
+- 家族条目 pkg=null 导致 	argetPackageFor() 返回 null，**家族开关可能送不到对应应用**；
+  新增 Config.pkgOfFamily(family) 补上映射，图标/版本/写入目标同时修好。
+
+### 真机验证（RMX8899）
+
+- 隐藏/恢复图标：两条路径都实测通过（dumpsys + esolve-activity + 实际启动）。
+- 重构未影响 hook：优酷 11.2.15 强停重开，模块日志 27 条规则
+  **hooked x14 / skipped x12 / miss x1**。skipped = 对应开关已关。
+
+### 遗留（本轮发现，未修）
+
+- youku_feed_ad_card 在优酷 11.2.15 上 status=miss，reason 是
+  "sweep ran on RootPageActivity; badges=1 collapsed=0" + 完整 ancestry。
+  这是**内部规则、不对应任何开关**，属于该版本的适配缺口，与本轮改动无关，需要单独适配。
+- LSPosed modules 表仍留有已卸载旧模块（qqmusicclean / weiboclean / didiadclean /
+  heytapmarketclean / taobaoadclean）的陈旧行，未清理。
+- build.ps1 会吞掉 javac 的具体错误文本，只留行号。排查要用
+  javac -sourcepath <src> -classpath android.jar 单独编译取真实报错。
+- 设备显示 1272x2772，单文件 javac 会偶发 "could not create parent directories"（沙箱写 class 目录），
+  直接跑 build.ps1 正常。

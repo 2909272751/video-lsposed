@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Two themes instead of one hard-coded Theme.Material.Light: -night picks the dark parent, so
+  every framework-drawn piece (AlertDialog, toast, the overflow menu) follows the system theme
+  without MainActivity having to restyle them one by one.
+-->
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

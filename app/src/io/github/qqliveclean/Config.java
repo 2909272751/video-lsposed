@@ -59,6 +59,15 @@ public final class Config {
         return false;
     }
 
+    /** Which app a merged rule set governs. Needed for the settings icon, version line and write target. */
+    static String pkgOfFamily(String family) {
+        if (FamilySettings.QQMUSIC.equals(family)) return PACKAGE_QQMUSIC;
+        if (FamilySettings.DIDI.equals(family)) return PACKAGE_DIDI;
+        if (FamilySettings.TAOBAO.equals(family)) return PACKAGE_TAOBAO;
+        if (FamilySettings.WEIBO.equals(family)) return PACKAGE_WEIBO;
+        if (FamilySettings.HEYTAP.equals(family)) return PACKAGE_HEYTAP;
+        return null;
+    }
     /** Display name used in the settings page, the logs and the compatibility report header. */
     static String appLabel(String packageName) {
         if (PACKAGE_IQIYI.equals(packageName)) return "爱奇艺";
@@ -68,7 +77,12 @@ public final class Config {
         if (PACKAGE_TAOBAO.equals(packageName)) return "淘宝";
         if (PACKAGE_XIANYU.equals(packageName)) return "闲鱼";
         if (PACKAGE_WEIBO.equals(packageName)) return "微博";
-        return "腾讯视频";
+        if (PACKAGE_HEYTAP.equals(packageName)) return "OPPO 软件商店";
+        // The fallback used to be 腾讯视频, so any package missing from the list above was
+        // labelled 腾讯视频 - the 软件商店 page said "强停并重新打开腾讯视频".
+        // Returning the package name makes a gap obvious instead of quietly lying.
+        if (PACKAGE.equals(packageName)) return "腾讯视频";
+        return packageName;
     }
 
     /** Settings page's own private store. Served to the target process by {@link ConfigProvider}. */
