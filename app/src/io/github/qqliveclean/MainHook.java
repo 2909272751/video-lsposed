@@ -125,7 +125,7 @@ public final class MainHook extends XposedModule {
      * is the source of truth and is bumped by the same edit that bumps the manifest.
      */
     private static String versionName() {
-        return "qlc-1.0.0";
+        return "qlc-1.1.0";
     }
 
     /**
